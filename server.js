@@ -5,7 +5,9 @@ const crypto = require('crypto');
 const cookieParser = require('cookie-parser');
 const nodemailer = require('nodemailer');
 const jwt = require('jsonwebtoken');
+const ExcelJS = require('exceljs');
 const db = require('./db');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -214,12 +216,148 @@ app.delete('/api/admin/accounts/:id', requireAdmin, async (req, res) => {
 app.get('/api/backup', requireAuth, attachProfile, (req, res) => {
   res.json({ backupVersion: "9.0", profileName: req.profile.name, timestamp: new Date().toISOString(), data: req.profile.data, frf: req.profile.frf });
 });
+// ============================================
+// DEMO API (Unauthenticated)
+// ============================================
+app.get('/api/demo-data', (req, res) => {
+  try {
+    const dataPath = path.join(__dirname, 'data.json');
+    const frfPath = path.join(__dirname, 'frf.json');
+    
+    let demoData = [];
+    let demoFrf = { exchanges: [], positions: [] };
+
+    if (fs.existsSync(dataPath)) {
+      demoData = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
+    }
+    if (fs.existsSync(frfPath)) {
+      demoFrf = JSON.parse(fs.readFileSync(frfPath, 'utf8'));
+    }
+
+    res.json({ data: demoData, frf: demoFrf });
+  } catch (error) {
+    console.error("Fehler beim Laden der Demo-Daten:", error);
+    res.status(500).json({ error: "Fehler beim Laden der Demo-Daten." });
+  }
+});
+
 app.post('/api/backup/restore', requireAuth, attachProfile, async (req, res) => {
   const { data, frf } = req.body;
   if (!data || !frf) return res.status(400).json({ error: "Ungültige Backup-Datei" });
   req.profile.data = data; req.profile.frf = frf;
   await saveProfile(req);
   res.json({ ok: 1 });
+});
+
+// ============================================
+// EXPORT API (EXCEL)
+// ============================================
+app.get('/api/export/excel', requireAuth, attachProfile, async (req, res) => {
+  try {
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'DeFi Vault';
+    workbook.created = new Date();
+
+    const ws = workbook.addWorksheet('Dashboard', { views: [{ state: 'frozen', xSplit: 0, ySplit: 1 }] });
+
+    const FONT_ALL = { name: 'Arial', size: 10 };
+    const FONT_HEADER = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+    const FONT_MAIN_ROW = { name: 'Arial', size: 10, bold: true };
+    const FONT_SUB_ROW = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF555555' } };
+
+    const FILL_HEADER = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } };
+    const FILL_MAIN = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+    const FILL_SUB_INV = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFECFDF5' } };
+    const FILL_SUB_REW = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFBEB' } };
+
+    ws.columns = [
+      { header: 'Typ / Aktion', key: 'type', width: 22 },
+      { header: 'Strategie / Datum', key: 'name_or_date', width: 35 },
+      { header: 'Basis Token', key: 'token', width: 25 },
+      { header: 'Investiert ($)', key: 'invested', width: 18 },
+      { header: 'Belohnungen ($)', key: 'rewards', width: 18 },
+      { header: 'Net PnL ($)', key: 'pnl', width: 18 },
+      { header: 'Notizen', key: 'notes', width: 50 },
+    ];
+
+    const headerRow = ws.getRow(1);
+    headerRow.font = FONT_HEADER;
+    headerRow.fill = FILL_HEADER;
+    headerRow.height = 25;
+    headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
+
+    let currentRowCount = 2;
+
+    req.profile.data.forEach((strategy) => {
+      const investiert = strategy.investmentHistory.reduce((sum, current) => sum + current.amount, 0);
+      const rewards = strategy.rewards.reduce((sum, current) => sum + current.amount, 0);
+      const basisToken = strategy.token ? `${strategy.token.amount} ${strategy.token.name} (@ ${strategy.token.entryPrice})` : '-';
+      
+      const mainRow = ws.addRow({
+        type: '📌 Strategie',
+        name_or_date: strategy.name,
+        token: basisToken,
+        invested: investiert,
+        rewards: rewards,
+        pnl: (rewards - investiert) + investiert,
+        notes: strategy.notes
+      });
+
+      mainRow.font = FONT_MAIN_ROW;
+      mainRow.fill = FILL_MAIN;
+      mainRow.height = 22;
+      mainRow.getCell('invested').numFmt = '#,##0.00 $';
+      mainRow.getCell('rewards').numFmt = '#,##0.00 $';
+      mainRow.getCell('pnl').numFmt = '#,##0.00 $';
+      mainRow.alignment = { vertical: 'middle' };
+      
+      currentRowCount++;
+
+      strategy.investmentHistory.forEach(inv => {
+        const subRow = ws.addRow({
+          type: '    ➡️ Investition',
+          name_or_date: new Date(inv.date).toLocaleDateString() + ' ' + new Date(inv.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+          token: '', invested: inv.amount, rewards: '', pnl: '', notes: inv.note
+        });
+        subRow.font = FONT_SUB_ROW; subRow.fill = FILL_SUB_INV;
+        subRow.getCell('invested').numFmt = '#,##0.00 $'; subRow.alignment = { vertical: 'middle' };
+        subRow.outlineLevel = 1; currentRowCount++;
+      });
+
+      strategy.rewards.forEach(rew => {
+        const subRow = ws.addRow({
+          type: '    🎁 Belohnung',
+          name_or_date: new Date(rew.date).toLocaleDateString() + ' ' + new Date(rew.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+          token: '', invested: '', rewards: rew.amount, pnl: '', notes: rew.note
+        });
+        subRow.font = FONT_SUB_ROW; subRow.fill = FILL_SUB_REW;
+        subRow.getCell('rewards').numFmt = '#,##0.00 $'; subRow.alignment = { vertical: 'middle' };
+        subRow.outlineLevel = 1; currentRowCount++;
+      });
+      
+      const divider = ws.addRow({}); divider.height = 10; currentRowCount++;
+    });
+
+    ws.eachRow({ includeEmpty: false }, function(row, rowNumber) {
+      if (rowNumber === 1) return;
+      row.eachCell({ includeEmpty: true }, function(cell) { if (!cell.font) cell.font = FONT_ALL; });
+    });
+
+    for(let i = currentRowCount; i <= Math.max(currentRowCount, 150); i++) {
+       ws.getRow(i).outlineLevel = 0; ws.getRow(i).font = FONT_ALL;
+    }
+
+    ws.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="DeFi_Vault_${req.profile.name.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx"`);
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error("Excel Generation Error:", error);
+    res.status(500).json({ error: 'Fehler beim Generieren der Excel Datei' });
+  }
 });
 
 // ============================================

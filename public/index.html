@@ -46,7 +46,7 @@
 <div id="app"><div class="ld"><div class="sp"></div></div></div>
 <script>
 var AUTH={loggedIn:false, account:null, profiles:[]}, PID=null, S=[], FR={exchanges:[],positions:[]}, U=[], V="active", SI=null, FPI=null, M={};
-var VW="grid", STRAT_SORT="size", FRF_SORT="size", EXP={}, UD=false, PRICES={}, FRFV="open";
+var VW="grid", STRAT_SORT="size", FRF_SORT="size", EXP={}, UD=false, PRICES={}, FRFV="open", IS_DEMO=false;
 var UI_KEY_BASE="defi_vault_ui_state", LAST_RENDER_AT=0, LAST_WAKE_AT=0;
 var CG_MAP={bitcoin:"BTC",ethereum:"ETH",solana:"SOL",avalanche:"AVAX",pendle:"PENDLE",chainlink:"LINK",arbitrum:"ARB",optimism:"OP",uniswap:"UNI",aave:"AAVE",tether_gold:"XAUT",coinbase_wrapped_btc:"cbBTC",wrapped_bitcoin:"WBTC",berachain:"BERA",monad:"WMON"};
 var CG_REV={}; for(let k in CG_MAP) CG_REV[CG_MAP[k].toUpperCase()] = k;
@@ -135,6 +135,11 @@ function fetchPrices(){
 }
 
 function api(url, opts={}) {
+  if (IS_DEMO && opts.method && opts.method.toUpperCase() !== 'GET' && !url.includes('/api/auth')) {
+    alert("In der Demo-Version können keine Änderungen gespeichert werden. Bitte registriere dich oder logge dich ein.");
+    return Promise.reject(new Error("demo_blocked"));
+  }
+
   opts.headers = opts.headers || {};
   opts.headers['Content-Type'] = 'application/json';
   if(PID) opts.headers['x-profile-id'] = PID;
@@ -150,6 +155,11 @@ function api(url, opts={}) {
 }
 
 function F(u, o={}) {
+  if (IS_DEMO && o.method && o.method.toUpperCase() !== 'GET' && !u.includes('/api/auth')) {
+    alert("In der Demo-Version können keine Änderungen gespeichert werden. Bitte registriere dich oder logge dich ein.");
+    return Promise.reject(new Error("demo_blocked"));
+  }
+
   o.headers = o.headers || {};
   o.headers['Content-Type'] = 'application/json';
   if(PID) o.headers['x-profile-id'] = PID;
@@ -163,7 +173,26 @@ function F(u, o={}) {
 function loadData() {
   api('/api/auth/status').then(res => {
     AUTH.loggedIn = res.data.loggedIn;
-    if(!AUTH.loggedIn) { S=[]; FR={exchanges:[],positions:[]}; U=[]; R(); return; }
+    if(!AUTH.loggedIn) { 
+      IS_DEMO = true;
+      AUTH.account = { email: 'demo@defitracker.com' };
+      AUTH.profiles = [{id: 'demo_profile', name: 'Demo Portfolio'}];
+      PID = 'demo_profile';
+      
+      restoreUi(); normUi();
+      api('/api/demo-data').then(d => {
+        S = d.data.data || [];
+        FR = d.data.frf || {exchanges:[], positions:[]};
+        U = [];
+        R();
+        fetchPrices();
+      }).catch(err => {
+         document.getElementById("app").innerHTML = '<div class="emp" style="color:var(--r)">Fehler beim Laden der Demo-Daten: '+err.message+'</div>';
+      });
+      return; 
+    }
+    
+    IS_DEMO = false;
     AUTH.account = res.data.account;
     AUTH.profiles = res.data.profiles || [];
     if(PID && !AUTH.profiles.find(p => p.id === PID)) PID = null;
@@ -185,7 +214,7 @@ function loadData() {
       if(V === 'admin') loadAdmin(); else R();
     }
   }).catch(e => { 
-    if(e.message !== "auth") {
+    if(e.message !== "auth" && e.message !== "demo_blocked") {
       document.getElementById("app").innerHTML = '<div style="padding:40px 20px;text-align:center;color:var(--r)"><b>System-Fehler:</b><br>'+e.message+'<br><br>Bitte lade die Seite mit <b>Strg + F5</b> neu.</div>';
     }
   });
@@ -286,11 +315,15 @@ function R() {
     hc+='<span style="font-size:11px;color:var(--t5)">→</span></div></div>'; return hc;
   }
 
-  let h = '<header class="hdr"><div class="hl"><div><svg width="26" height="26" viewBox="0 0 28 28"><rect x="2" y="2" width="24" height="24" rx="6" stroke="#00e5a0" stroke-width="2" fill="none"/><path d="M8 18L12 10L16 15L20 8" stroke="#00e5a0" stroke-width="2" stroke-linecap="round"/></svg></div><div><div class="tt">DeFi Vault</div><div class="su">Secure Tracker</div></div></div><div class="hr">';
+  let h = '';
+  if (IS_DEMO) {
+    h += '<div style="background:var(--blb);color:var(--bl);padding:10px 16px;text-align:center;font-size:13px;font-weight:600;display:flex;justify-content:center;align-items:center;gap:16px;z-index:100;position:relative;">Du befindest dich im Demo-Modus. Bitte logge dich ein oder erstelle einen Account, um deine eigenen Daten zu verwalten und Fortschritte zu speichern! <button class="bt bp" style="padding:4px 12px;font-size:12px;" onclick="M.login=1;R()">Login / Register</button></div>';
+  }
+
+  h += '<header class="hdr"><div class="hl"><div><svg width="26" height="26" viewBox="0 0 28 28"><rect x="2" y="2" width="24" height="24" rx="6" stroke="#00e5a0" stroke-width="2" fill="none"/><path d="M8 18L12 10L16 15L20 8" stroke="#00e5a0" stroke-width="2" stroke-linecap="round"/></svg></div><div><div class="tt">DeFi Vault'+(IS_DEMO?' (DEMO)':'')+'</div><div class="su">Secure Tracker</div></div></div><div class="hr">';
   
-  if(!AUTH.loggedIn) {
+  if(!AUTH.loggedIn && !IS_DEMO) {
     h += '<button class="bt bp" onclick="M.login=1;R()">Login / Registrieren</button></div></header><main class="mn">';
-    h += '<div class="ibx" style="margin-bottom:18px"><div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap"><div><div style="font-size:15px;font-weight:600;color:#f0f2f5;margin-bottom:6px">Willkommen bei DeFi Vault</div><div style="font-size:13px;color:var(--t3);line-height:1.5">Bitte logge dich ein oder erstelle einen neuen Account, um deine Wallets zu verwalten. Nach dem Login kannst du beliebig viele Profile anlegen.</div></div></div></div>';
   } else {
     h+='<div class="undo-wrap"><button class="undo-btn'+(U.length?'':'" disabled')+'" onclick="UD=!UD;M.usr=false;R()">↩'+(U.length?' ('+U.length+')':'')+'</button>';
     if(UD&&U.length){h+='<div class="undo-dd">';U.slice().reverse().forEach(u=>{h+='<div class="undo-item" onclick="event.stopPropagation();doUndo('+u.index+')"><span class="undo-label">'+es(u.label)+'</span><span class="undo-time">'+fd(u.time)+'</span></div>'});h+='</div>'}h+='</div>';
@@ -303,15 +336,23 @@ function R() {
     h += '<div style="position:relative"><button class="bt bcn bs" onclick="event.stopPropagation();M.usr=!M.usr;UD=false;R()" style="display:flex;align-items:center;gap:6px"><span class="bdg ac" style="margin:0">'+(activeP?es(activeP.name):"Kein Profil")+'</span><span style="font-size:10px;color:var(--t4)">▼</span></button>';
     if(M.usr) {
       h += '<div class="undo-dd" style="right:0;top:calc(100% + 6px);padding:8px;display:flex;flex-direction:column;gap:4px;min-width:240px" onclick="event.stopPropagation()">';
-      h += '<button class="bt bp" style="justify-content:center;margin-bottom:6px" onclick="cm();M.np=1;R()">+ Neues Profil / Wallet</button>';
-      AUTH.profiles.forEach(p => {
-        let sel = p.id===PID;
-        h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;background:var(--bg2);border-radius:6px;cursor:pointer;border:1px solid '+(sel?'var(--g)':'var(--bd)')+'" onclick="setPid(\''+p.id+'\')"><span style="font-size:13px;color:var(--t2);font-weight:'+(sel?'600':'400')+'">'+es(p.name)+'</span><div style="display:flex;gap:4px"><button class="bt bed" onclick="event.stopPropagation();M.usr=false;M.eu={id:\''+p.id+'\',name:\''+es(p.name)+'\'};R()">✎</button><button class="bt bic" onclick="event.stopPropagation();M.usr=false;delProf(\''+p.id+'\')">✕</button></div></div>';
-      });
-      h += '<div style="height:1px;background:var(--bd);margin:4px 0"></div>';
-      h += '<div style="font-size:10px;color:var(--t4);text-align:center;margin-bottom:4px">'+es(AUTH.account.email)+'</div>';
-      if(activeP) h += '<div style="display:flex;gap:4px"><button class="bt bb bs" style="flex:1;justify-content:center" onclick="dBack()">Backup ↓</button><button class="bt by bs" style="flex:1;justify-content:center" onclick="rBack()">Restore ↑</button></div>';
-      h += '<button class="bt bk" style="margin:0;font-size:12px;padding:6px;margin-top:4px" onclick="logout()">Abmelden</button>';
+      if (!IS_DEMO) {
+        h += '<button class="bt bp" style="justify-content:center;margin-bottom:6px" onclick="cm();M.np=1;R()">+ Neues Profil / Wallet</button>';
+        AUTH.profiles.forEach(p => {
+          let sel = p.id===PID;
+          h += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;background:var(--bg2);border-radius:6px;cursor:pointer;border:1px solid '+(sel?'var(--g)':'var(--bd)')+'" onclick="setPid(\''+p.id+'\')"><span style="font-size:13px;color:var(--t2);font-weight:'+(sel?'600':'400')+'">'+es(p.name)+'</span><div style="display:flex;gap:4px"><button class="bt bed" onclick="event.stopPropagation();M.usr=false;M.eu={id:\''+p.id+'\',name:\''+es(p.name)+'\'};R()">✎</button><button class="bt bic" onclick="event.stopPropagation();M.usr=false;delProf(\''+p.id+'\')">✕</button></div></div>';
+        });
+        h += '<div style="height:1px;background:var(--bd);margin:4px 0"></div>';
+        h += '<div style="font-size:10px;color:var(--t4);text-align:center;margin-bottom:4px">'+es(AUTH.account.email)+'</div>';
+        if(activeP) {
+          h += '<div style="display:flex;gap:4px"><button class="bt bb bs" style="flex:1;justify-content:center" onclick="dBack()">Backup ↓</button><button class="bt by bs" style="flex:1;justify-content:center" onclick="rBack()">Restore ↑</button></div>';
+          h += '<button class="bt bp bs" style="margin-top:4px;width:100%;justify-content:center;background:var(--gb);color:var(--g)" onclick="window.location.href=\'/api/export/excel\'">Excel Export (XLSX) ↓</button>';
+        }
+        h += '<button class="bt bk" style="margin:0;font-size:12px;padding:6px;margin-top:4px" onclick="logout()">Abmelden</button>';
+      } else {
+        h += '<div style="font-size:13px;color:var(--t2);padding:10px;text-align:center;">Du bist im Demo-Modus.</div>';
+        h += '<button class="bt bp" style="justify-content:center" onclick="M.login=1;R()">Login / Register</button>';
+      }
       h += '</div>';
     }
     h += '</div></div></header><main class="mn">';
