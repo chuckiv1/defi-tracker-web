@@ -221,8 +221,8 @@ app.get('/api/backup', requireAuth, attachProfile, (req, res) => {
 // ============================================
 app.get('/api/demo-data', (req, res) => {
   try {
-    const dataPath = path.join(__dirname, 'data.json');
-    const frfPath = path.join(__dirname, 'frf.json');
+    const dataPath = path.join(__dirname, 'demo_data.json');
+    const frfPath = path.join(__dirname, 'demo_frf.json');
     
     let demoData = [];
     let demoFrf = { exchanges: [], positions: [] };

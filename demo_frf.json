@@ -1,0 +1,72 @@
+{
+  "exchanges": [
+    {
+      "id": "demo_ex_1",
+      "name": "CryptoX"
+    },
+    {
+      "id": "demo_ex_2",
+      "name": "TradeSphere"
+    },
+    {
+      "id": "demo_ex_3",
+      "name": "MoonDEX"
+    }
+  ],
+  "positions": [
+    {
+      "id": "demo_pos_1",
+      "exchangeId": "demo_ex_1",
+      "type": "long",
+      "pair": "BTC/USDT",
+      "entryPrice": 45000,
+      "amount": 0.5,
+      "leverage": 10,
+      "date": "2024-02-15T08:30:00.000Z",
+      "status": "open",
+      "notes": "Swing trade targeting previous ATH"
+    },
+    {
+      "id": "demo_pos_2",
+      "exchangeId": "demo_ex_2",
+      "type": "short",
+      "pair": "DOGE/USDT",
+      "entryPrice": 0.15,
+      "amount": 100000,
+      "leverage": 5,
+      "date": "2024-03-05T14:45:00.000Z",
+      "status": "open",
+      "notes": "Fading the recent meme pump"
+    },
+    {
+      "id": "demo_pos_3",
+      "exchangeId": "demo_ex_1",
+      "type": "long",
+      "pair": "ETH/USDT",
+      "entryPrice": 2200,
+      "amount": 5,
+      "leverage": 3,
+      "date": "2024-01-10T09:15:00.000Z",
+      "exitPrice": 3100,
+      "exitDate": "2024-03-01T11:00:00.000Z",
+      "status": "closed",
+      "pnl": 4500,
+      "notes": "Target hit successfully"
+    },
+    {
+      "id": "demo_pos_4",
+      "exchangeId": "demo_ex_3",
+      "type": "short",
+      "pair": "SOL/USDT",
+      "entryPrice": 110,
+      "amount": 100,
+      "leverage": 2,
+      "date": "2024-02-20T16:20:00.000Z",
+      "exitPrice": 135,
+      "exitDate": "2024-02-28T10:00:00.000Z",
+      "status": "closed",
+      "pnl": -2500,
+      "notes": "Stopped out due to unexpected breakout"
+    }
+  ]
+}
