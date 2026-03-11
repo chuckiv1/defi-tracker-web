@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>DeFi Vault - Verifizierung</title>
+  <style>body{background:#0d0f13;color:#e0e4ec;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;text-align:center}</style>
+</head>
+<body>
+  <div>
+    <h2 id="msg">Verifiziere Account...</h2>
+    <a href="/" style="color:#00e5a0;display:none;margin-top:20px;text-decoration:none;border:1px solid #00e5a0;padding:10px 20px;border-radius:8px" id="btn">Zum Login</a>
+  </div>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    fetch('/api/auth/verify', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({token})
+    }).then(r => r.json()).then(d => {
+      if(d.ok) { document.getElementById('msg').innerText = "Erfolgreich verifiziert!"; document.getElementById('btn').style.display = "inline-block"; }
+      else { document.getElementById('msg').innerText = "Fehler: " + d.error; }
+    });
+  </script>
+</body>
+</html>

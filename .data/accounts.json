@@ -1,0 +1,13 @@
+[
+  {
+    "id": "b6fb859acc75cff5b58ce19eddda5cac",
+    "email": "test@gmx.de",
+    "salt": "e3684d346cacc4c192d5bc5b37127a9d",
+    "passHash": "5b23459f1b481398d2869634387a263260f6e9b0a6f8773bfab545311fe6f596575623880a11f327a66fd4370bce49f46b0bab74b9e3d8f1a3d2a14a71bde8dc",
+    "role": "admin",
+    "isVerified": true,
+    "verifyToken": null,
+    "isBlocked": false,
+    "createdAt": "2026-03-10T22:26:14.953Z"
+  }
+]
