@@ -233,6 +233,26 @@ app.delete('/api/admin/accounts/:id', requireAdmin, async (req, res) => {
   res.json({ ok: 1 });
 });
 
+app.get('/api/admin/features', requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await db.query(`
+      SELECT r.id, r.title, r.description, r.status, r.createdat, a.email as author,
+             (SELECT COUNT(*) FROM feature_votes v WHERE v.request_id = r.id) as votes
+      FROM feature_requests r
+      JOIN accounts a ON r.account_id = a.id
+      ORDER BY r.createdat DESC
+    `);
+    res.json(rows);
+  } catch(e) { console.error(e); res.status(500).json({error:1}); }
+});
+
+app.put('/api/admin/features/:id/status', requireAdmin, async (req, res) => {
+  try {
+    await db.query('UPDATE feature_requests SET status = $1 WHERE id = $2', [req.body.status, req.params.id]);
+    res.json({ ok: 1 });
+  } catch(e) { console.error(e); res.status(500).json({error:1}); }
+});
+
 // ============================================
 // BACKUP API
 // ============================================
@@ -449,5 +469,96 @@ router.put('/frf/positions/:id/close', async (req, res) => {
 router.put('/frf/positions/:id/toggle-strategy', async (req, res) => { svU(req, 'Toggle Strat'); const p = req.profile.frf.positions.find(x => x.id === req.params.id); p.includeInStrategy = !p.includeInStrategy; await saveProfile(req); res.json(req.profile.frf); });
 router.post('/frf/positions/:id/funding/:side', async (req, res) => { svU(req, 'Fund+'); const p = req.profile.frf.positions.find(x => x.id === req.params.id); const arr = req.params.side === 'short' ? p.fundingShort : p.fundingLong; arr.push({id:gid(), amount:parseFloat(req.body.amount), date:new Date().toISOString(), note:req.body.note||''}); await saveProfile(req); res.json(req.profile.frf); });
 router.delete('/frf/positions/:id/funding/:side/:fid', async (req, res) => { svU(req, 'Fund-'); const p = req.profile.frf.positions.find(x => x.id === req.params.id); if(req.params.side==='short') p.fundingShort = p.fundingShort.filter(x=>x.id!==req.params.fid); else p.fundingLong = p.fundingLong.filter(x=>x.id!==req.params.fid); await saveProfile(req); res.json(req.profile.frf); });
+// ============================================
+// SUPPORT & COMMUNITY API
+// ============================================
+app.post('/api/support', requireAuth, async (req, res) => {
+  try {
+    const ok = await sendMail("tracker.support@defivault.cloud", "Support-Anfrage: " + req.body.title, "Von: " + req.account.email + "<br><br>" + req.body.message);
+    res.json({ ok: ok ? 1 : 0 });
+  } catch(e) { console.error(e); res.status(500).json({error:1}); }
+});
+
+app.post('/api/features', requireAuth, async (req, res) => {
+  try {
+    await db.query('INSERT INTO feature_requests (id, account_id, title, description) VALUES ($1, $2, $3, $4)', [gid(), req.account.id, req.body.title, req.body.description]);
+    res.json({ ok: 1 });
+  } catch(e) { console.error(e); res.status(500).json({error:1}); }
+});
+
+function getLastSyncReset() {
+  const d = new Date();
+  // Saturday is day 6. If today is Sat (6) after 18:00, or Sun-Fri, find the correct previous/current Saturday 18:00.
+  // 18:00 in CET is 17:00 UTC. Let's base it on UTC.
+  const day = d.getUTCDay();
+  const hours = d.getUTCHours();
+  
+  // How many days ago was the last Saturday?
+  // day 6 (Sat) -> 0 if hours >= 17, else 7
+  // day 0 (Sun) -> 1
+  // day 1 (Mon) -> 2 ...
+  let daysAgo = 0;
+  if (day === 6) { daysAgo = hours >= 17 ? 0 : 7; } 
+  else { daysAgo = day + 1; }
+  
+  const reset = new Date(d);
+  reset.setUTCDate(d.getUTCDate() - daysAgo);
+  reset.setUTCHours(17, 0, 0, 0); // 17:00 UTC = 18:00 CET (Winter), 19:00 CEST (Summer) - close enough, or exactly 18:00 Local:
+  // For exact 18:00 Local time we use local methods:
+  const localReset = new Date();
+  localReset.setDate(localReset.getDate() - (localReset.getDay() === 6 ? (localReset.getHours() >= 18 ? 0 : 7) : localReset.getDay() + 1));
+  localReset.setHours(18, 0, 0, 0);
+  return localReset.toISOString();
+}
+
+app.get('/api/features', requireAuth, async (req, res) => {
+  try {
+    const lastReset = getLastSyncReset();
+
+    const { rows: voteCheck } = await db.query('SELECT COUNT(*) as anz FROM feature_votes WHERE account_id = $1 AND createdat >= $2', [req.account.id, lastReset]);
+    const weeklyVotesUsed = parseInt(voteCheck[0].anz) || 0;
+    const canVoteGlobally = weeklyVotesUsed < 1;
+
+    const { rows } = await db.query(`
+      SELECT r.id, r.title, r.description, r.status, r.createdat, 
+             a.email as author,
+             (SELECT COUNT(*) FROM feature_votes v WHERE v.request_id = r.id) as votes,
+             EXISTS(SELECT 1 FROM feature_votes v WHERE v.request_id = r.id AND v.account_id = $1) as has_voted
+      FROM feature_requests r
+      JOIN accounts a ON r.account_id = a.id
+      WHERE r.status IN ('approved', 'implemented', 'planned')
+      ORDER BY votes DESC, r.createdat DESC
+    `, [req.account.id]);
+    
+    res.json({ list: rows, canVoteGlobally, weeklyVotesUsed, nextReset: getLastSyncReset()  });
+  } catch(e) { console.error(e); res.status(500).json({error:1}); }
+});
+
+app.post('/api/features/:id/vote', requireAuth, async (req, res) => {
+  try {
+    const lastReset = getLastSyncReset();
+
+    // Hat der User in diesem Zeitraum auf dem gesamten Board schon abgestimmt?
+    const { rows: voteCheck } = await db.query('SELECT 1 FROM feature_votes WHERE account_id = $1 AND createdat >= $2', [req.account.id, lastReset]);
+    
+    // Prüfe, ob er evtl GERADE diesen Vote ENTFERNEN will (Toggle) -> Wenn User VOR dem Reset abgestimmt hat, verbieten wir das ab-voten?
+    // Oder ob "max 1 Vote" bedeutet "nur 1 aktiver Vote pro Woche setzbar, ab-voten immer erlaubt"? 
+    // Wir implementieren: Nur HINZUFÜGEN ist limitiert auf 1 pro Woche.
+    const { rows: hasVoted } = await db.query('SELECT 1 FROM feature_votes WHERE request_id = $1 AND account_id = $2', [req.params.id, req.account.id]);
+    
+    if (hasVoted.length > 0) {
+      // Vote zurückziehen (immer erlaubt)
+      await db.query('DELETE FROM feature_votes WHERE request_id = $1 AND account_id = $2', [req.params.id, req.account.id]);
+      return res.json({ voted: false });
+    } else {
+      // Neuen Vote setzen -> Block, falls in der Woche schon was anderes gevotet wurde!
+      if (voteCheck.length >= 1) {
+        return res.status(403).json({ error: 'wöchentliches voting limit erreicht' });
+      }
+      await db.query('INSERT INTO feature_votes (request_id, account_id, createdat) VALUES ($1, $2, NOW())', [req.params.id, req.account.id]);
+      return res.json({ voted: true });
+    }
+  } catch(e) { console.error(e); res.status(500).json({error:1}); }
+});
 
 app.listen(PORT, '0.0.0.0', () => { console.log(`🚀 DeFi Vault Server läuft auf Port ${PORT} (PostgreSQL+JWT)`); });

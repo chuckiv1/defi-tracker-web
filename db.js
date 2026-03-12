@@ -35,6 +35,21 @@ async function initDB() {
         loginDate DATE NOT NULL,
         UNIQUE(accountId, loginDate)
       );
+      CREATE TABLE IF NOT EXISTS feature_requests (
+        id VARCHAR(50) PRIMARY KEY,
+        account_id VARCHAR(50) REFERENCES accounts(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        description TEXT NOT NULL,
+        status VARCHAR(20) DEFAULT 'pending',
+        createdat TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS feature_votes (
+        request_id VARCHAR(50) REFERENCES feature_requests(id) ON DELETE CASCADE,
+        account_id VARCHAR(50) REFERENCES accounts(id) ON DELETE CASCADE,
+        createdat TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (request_id, account_id)
+      );
     `);
     console.log("✅ Database initialized successfully.");
   } catch (err) {

@@ -261,7 +261,9 @@ function delProf(id) { if(!confirm("Profil und alle zugehörigen Strategien wirk
 var ADM_SORT = "newest", ADM_SEARCH = "";
 
 function loadAdmin() { 
-  api('/api/admin/accounts').then(r=>{M.accs=r.data; R()}); 
+  Promise.all([api('/api/admin/accounts'), api('/api/admin/features')]).then(r => {
+    M.accs=r[0].data; M.admFeat=r[1].data; R();
+  });
 }
 function adminTgl(id) { 
   if(!confirm("Account Sperr-Status wirklich ändern?")) return;
@@ -269,11 +271,48 @@ function adminTgl(id) {
     M.adet = null; loadAdmin();
   }); 
 }
+function adminFeatTgl(id, status) {
+  api('/api/admin/features/'+id+'/status', {method:'PUT', body: JSON.stringify({status:status})}).then(() => {
+    loadAdmin();
+  });
+}
 function adminDel(id) { 
   if(!confirm("ACHTUNG: Account und ALLE zugehörigen Daten unwiderruflich löschen?")) return;
   api('/api/admin/accounts/'+id, {method:'DELETE'}).then(() => {
     M.adet = null; loadAdmin();
   }); 
+}
+
+var FEAT = [];
+window.FEAT_META = { canVoteGlobally: true, nextReset: '' };
+function loadFeatures() {
+  if(!AUTH.loggedIn) return;
+  api('/api/features').then(r => { 
+    FEAT = r.data.list || []; 
+    window.FEAT_META = { canVoteGlobally: r.data.canVoteGlobally, nextReset: r.data.nextReset, used: r.data.weeklyVotesUsed };
+    R(); 
+  });
+}
+function hSupport() {
+  let t = document.getElementById('s-title').value, m = document.getElementById('s-msg').value;
+  if(!t || !m) return alert("Bitte Titel und Nachricht ausfüllen.");
+  let btn = document.getElementById('s-btn'); btn.disabled = true; btn.innerText = 'Sende...';
+  api('/api/support', {method:'POST', body: JSON.stringify({title:t, message:m})}).then(r => {
+    if(r.status===200) { alert("Nachricht erfolgreich an den Support gesendet!"); document.getElementById('s-title').value=''; document.getElementById('s-msg').value=''; }
+    else alert("Fehler beim Senden.");
+    btn.disabled=false; btn.innerText='Senden';
+  });
+}
+function hFeature() {
+  let t = document.getElementById('f-title').value, m = document.getElementById('f-desc').value;
+  if(!t || !m) return alert("Bitte Titel und Beschreibung ausfüllen.");
+  api('/api/features', {method:'POST', body: JSON.stringify({title:t, description:m})}).then(r => {
+    if(r.status===200) { alert("Vorschlag erfolgreich eingereicht. Er wird bald vom Admin geprüft und veröffentlicht."); M.fnew=0; loadFeatures(); }
+    else alert("Fehler beim Einreichen.");
+  });
+}
+function hVote(id) {
+  api('/api/features/'+id+'/vote', {method:'POST'}).then(() => loadFeatures());
 }
 function openAdminDetail(accId) {
   var acc = (M.accs||[]).find(a => a.id === accId);
@@ -296,27 +335,51 @@ function renderAdminChart() {
   ctx.clearRect(0,0,w,h);
   
   var tf = M.adet.tf, stats = M.adet.stats;
-  var counts = [], maxC = 0, now = Date.now();
+  var counts = [], labels = [], maxC = 0, now = Date.now();
   for(var i=tf-1; i>=0; i--) {
-    let dStr = new Date(now - i*864e5).toISOString().split('T')[0];
+    let dObj = new Date(now - i*864e5);
+    let dStr = dObj.toISOString().split('T')[0];
+    let lbl = dObj.getDate().toString().padStart(2,'0')+'.'+(dObj.getMonth()+1).toString().padStart(2,'0')+'.';
     let c = stats.filter(s => s.startsWith(dStr)).length;
     counts.push(c);
+    labels.push(lbl);
     if(c > maxC) maxC = c;
   }
   
   if(maxC === 0) {
-    ctx.fillStyle = '#8a8f98'; ctx.font = '12px "DM Sans"'; ctx.textAlign = 'center';
-    ctx.fillText("Keine Aktivität in diesem Zeitraum", w/2, h/2+4);
+    ctx.fillStyle = '#8a8f98'; ctx.font = '12px "Inter", sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText("Keine Aktivität in diesem Zeitraum", w/2, h/2);
     return;
   }
   
-  var barW = (w / tf) - 2; if(barW < 2) barW = 2;
-  ctx.fillStyle = '#00e5a0';
+  var barW = (w / tf) - 4; if(barW < 4) barW = 4;
+  var bottomPadding = 24, topPadding = 20;
+  var maxH = h - bottomPadding - topPadding;
+
   counts.forEach((c, idx) => {
-    if(c === 0) return;
-    var bh = (c / maxC) * (h - 20);
-    var bx = Math.max(0, idx * (w / tf));
-    ctx.fillRect(bx, h - bh, barW, bh);
+    var bx = idx * (w / tf) + 2;
+    var rawBh = (c / maxC) * maxH;
+    var bh = c === 0 ? 0 : Math.max(4, rawBh);
+    var by = h - bottomPadding - bh;
+    
+    // Bar
+    ctx.fillStyle = c > 0 ? '#00e5a0' : '#2a2f3a';
+    if(c===0) { ctx.fillRect(bx, h - bottomPadding - 4, barW, 4); } 
+    else { ctx.fillRect(bx, by, barW, bh); }
+
+    // Count text inside/above bar
+    if(c > 0 && barW > 14) {
+      ctx.fillStyle = (bh > 20) ? '#0d0f14' : '#00e5a0';
+      ctx.font = '600 10px "JetBrains Mono", monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      let ty = (bh > 20) ? by + 10 : by - 8;
+      ctx.fillText(c.toString(), bx + barW/2, ty);
+    }
+    
+    // X-Axis Date (only show if enough space or every Nth label)
+    if (barW > 24 || (idx % Math.ceil(tf/7) === 0)) {
+       ctx.fillStyle = '#6b7280'; ctx.font = '10px "Inter", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+       ctx.fillText(labels[idx], bx + barW/2, h - bottomPadding + 6);
+    }
   });
 }
 
@@ -415,6 +478,7 @@ function R() {
     if(UD&&U.length){h+='<div class="undo-dd">';U.slice().reverse().forEach(u=>{h+='<div class="undo-item" onclick="event.stopPropagation();doUndo('+u.index+')"><span class="undo-label">'+es(u.label)+'</span><span class="undo-time">'+fd(u.time)+'</span></div>'});h+='</div>'}h+='</div>';
     
     h += '<nav class="nv"><button class="'+(V==="active"||(V==="detail"&&se&&!se.endedAt)?"a":"")+'" onclick="V=\'active\';SI=null;FPI=null;UD=false;M.usr=false;R()">Aktiv</button><button class="'+(V==="past"||(V==="detail"&&se&&se.endedAt)?"a":"")+'" onclick="V=\'past\';SI=null;FPI=null;UD=false;M.usr=false;R()">Vergangen</button><button class="'+(V==="frf"||V==="frf_pos"?"a":"")+'" onclick="FRFV=\'open\';V=\'frf\';SI=null;FPI=null;UD=false;M.usr=false;R()">FRF</button>';
+    if(AUTH.loggedIn && !IS_DEMO) h+= '<button class="'+(V==="community"?"a":"")+'" onclick="V=\'community\';SI=null;FPI=null;M.usr=false;loadFeatures();">Community</button>';
     if(AUTH.account.role === 'admin') h+= '<button class="'+(V==="admin"?"a":"")+'" onclick="V=\'admin\';SI=null;FPI=null;M.usr=false;loadAdmin();">Admin</button>';
     h += '</nav>';
     
@@ -445,18 +509,29 @@ function R() {
 
     if(!PID && V!=='admin') h += '<div class="emp">Bitte wähle rechts oben ein Profil (Wallet) aus oder erstelle ein neues.</div>';
     else if(V === 'admin') {
-      h += '<div class="sh" style="margin-bottom:16px"><h2 class="st">Admin Dashboard</h2><div style="display:flex;gap:8px;align-items:center"><input id="src-adm" type="text" placeholder="Suche (Email)..." value="'+es(ADM_SEARCH)+'" oninput="ADM_SEARCH=this.value;R()" style="width:180px;padding:8px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t)"><select style="width:160px" onchange="ADM_SORT=this.value;R()"><option value="newest" '+(ADM_SORT==="newest"?"selected":"")+'>Neueste zuerst</option><option value="az" '+(ADM_SORT==="az"?"selected":"")+'>A-Z</option><option value="usage" '+(ADM_SORT==="usage"?"selected":"")+'>Häufigste Nutzung</option></select></div></div><div class="tbl"><div class="tblh"><span style="flex:3">E-Mail</span><span style="flex:1">Status</span><span style="flex:1">Profile</span><span style="flex:1">Logins (30d)</span><span style="flex:1">Rolle</span></div>';
-      var shownAccs = (M.accs||[]).filter(a => !ADM_SEARCH || a.email.toLowerCase().includes(ADM_SEARCH.toLowerCase()));
-      shownAccs.sort((a,b) => {
-        if(ADM_SORT === "newest") return new Date(b.createdat).getTime() - new Date(a.createdat).getTime();
-        if(ADM_SORT === "az") return a.email.localeCompare(b.email);
-        if(ADM_SORT === "usage") return (b.loginCount30d||0) - (a.loginCount30d||0);
-        return 0;
-      });
-      shownAccs.forEach(a => {
-        h += '<div class="tblr" style="cursor:pointer" onclick="openAdminDetail(\''+a.id+'\')"><span style="flex:3;font-size:13px;color:var(--t2)">'+es(a.email)+'</span><span style="flex:1;font-size:12px">'+(a.isverified?'<span style="color:var(--g)">Aktiv</span>':'<span style="color:var(--y)">Wartend</span>')+' '+(a.isblocked?'<b style="color:var(--r)">(Gesperrt)</b>':'')+'</span><span style="flex:1;font-size:12px;color:var(--t2)">'+a.profileCount+'</span><span style="flex:1;font-size:12px;color:var(--t2)">'+(a.loginCount30d||0)+'</span><span style="flex:1;font-size:12px;color:var(--t4)">'+es(a.role)+'</span></div>';
-      });
-      h += '</div>';
+      window.ADM_TAB = window.ADM_TAB || 'accs';
+      h += '<div class="sh" style="margin-bottom:16px"><div style="display:flex;gap:12px;align-items:center"><h2 class="st">Admin Dashboard</h2><div class="vtg"><button class="'+(window.ADM_TAB==="accs"?"a":"")+'" onclick="window.ADM_TAB=\'accs\';R()">Accounts</button><button class="'+(window.ADM_TAB==="feats"?"a":"")+'" onclick="window.ADM_TAB=\'feats\';R()">Feature Requests</button></div></div></div>';
+      
+      if(window.ADM_TAB === 'accs') {
+        h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:16px"><input id="src-adm" type="text" placeholder="Suche (Email)..." value="'+es(ADM_SEARCH)+'" oninput="ADM_SEARCH=this.value;R()" style="width:180px;padding:8px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t)"><select style="width:160px" onchange="ADM_SORT=this.value;R()"><option value="newest" '+(ADM_SORT==="newest"?"selected":"")+'>Neueste zuerst</option><option value="az" '+(ADM_SORT==="az"?"selected":"")+'>A-Z</option><option value="usage" '+(ADM_SORT==="usage"?"selected":"")+'>Häufigste Nutzung</option></select></div><div class="tbl"><div class="tblh"><span style="flex:3">E-Mail</span><span style="flex:1">Status</span><span style="flex:1">Profile</span><span style="flex:1">Logins (30d)</span><span style="flex:1">Rolle</span></div>';
+        var shownAccs = (M.accs||[]).filter(a => !ADM_SEARCH || a.email.toLowerCase().includes(ADM_SEARCH.toLowerCase()));
+        shownAccs.sort((a,b) => {
+          if(ADM_SORT === "newest") return new Date(b.createdat).getTime() - new Date(a.createdat).getTime();
+          if(ADM_SORT === "az") return a.email.localeCompare(b.email);
+          if(ADM_SORT === "usage") return (b.loginCount30d||0) - (a.loginCount30d||0);
+          return 0;
+        });
+        shownAccs.forEach(a => {
+          h += '<div class="tblr" style="cursor:pointer" onclick="openAdminDetail(\''+a.id+'\')"><span style="flex:3;font-size:13px;color:var(--t2)">'+es(a.email)+'</span><span style="flex:1;font-size:12px">'+(a.isverified?'<span style="color:var(--g)">Aktiv</span>':'<span style="color:var(--y)">Wartend</span>')+' '+(a.isblocked?'<b style="color:var(--r)">(Gesperrt)</b>':'')+'</span><span style="flex:1;font-size:12px;color:var(--t2)">'+a.profileCount+'</span><span style="flex:1;font-size:12px;color:var(--t2)">'+(a.loginCount30d||0)+'</span><span style="flex:1;font-size:12px;color:var(--t4)">'+es(a.role)+'</span></div>';
+        });
+        h += '</div>';
+      } else {
+        h+='<div class="tbl"><div class="tblh"><span style="flex:2">Ersteller</span><span style="flex:3">Titel & Text</span><span style="width:100px;text-align:center">Votes</span><span style="width:140px;text-align:right">Aktion</span></div>';
+        (M.admFeat||[]).forEach(f => {
+           h+='<div class="tblr"><span style="flex:2;font-size:12px;color:var(--t3)">'+es(f.author)+'<br><span style="color:var(--t4);font-size:10px">'+fd(f.createdat)+'</span></span><span style="flex:3;font-size:13px"><b>'+es(f.title)+'</b><br><span style="color:var(--t2);font-size:12px;white-space:pre-wrap">'+es(f.description)+'</span></span><span style="width:100px;text-align:center;font-family:\'JetBrains Mono\',monospace;font-weight:600;color:var(--bp)">'+f.votes+'</span><span style="width:140px;text-align:right"><select style="font-size:12px;padding:4px" onchange="adminFeatTgl(\''+f.id+'\', this.value)"><option value="pending" '+(f.status==='pending'?'selected':'')+'>Pending</option><option value="approved" '+(f.status==='approved'?'selected':'')+'>Approved</option><option value="planned" '+(f.status==='planned'?'selected':'')+'>Planned</option><option value="implemented" '+(f.status==='implemented'?'selected':'')+'>Implemented</option><option value="rejected" '+(f.status==='rejected'?'selected':'')+'>Rejected</option></select></span></div>';
+        });
+        h+='</div>';
+      }
     }
     else if(V === 'active') {
       h+='<div class="sm"><div class="sc"><span class="sl">Investment</span><span class="sv">'+fn(ti)+' <span class="u">USDC</span></span></div><div class="sc"><span class="sl">Gains</span><span class="sv g">+'+fn(trw)+' <span class="u">USDC</span></span></div><div class="sc"><span class="sl">APR gesamt</span><span class="sv'+(wA>0?" g":"")+'">'+wA.toFixed(2)+'%</span></div><div class="sc"><span class="sl">Strategien</span><span class="sv">'+av.length+'</span></div></div>';
@@ -574,6 +649,35 @@ function R() {
         else{h+='<button class="bt bb" style="padding:10px 22px;font-size:13px" onclick="frfReopenPos(\''+fp.id+'\')">Reopnen</button>';h+='<button class="bt be" style="padding:10px 22px;font-size:13px" onclick="frfDelPos(\''+fp.id+'\')">Loeschen</button>';}h+='</div>';
       }
     }
+    else if(V === 'community') {
+      window.COM_TAB = window.COM_TAB || 'vote';
+      h+='<div class="sh" style="margin-bottom:16px"><h2 class="st">Community & Support</h2><div class="vtg"><button class="'+(window.COM_TAB==="vote"?"a":"")+'" onclick="window.COM_TAB=\'vote\';R()">🗳️ Feature Vorschläge</button><button class="'+(window.COM_TAB==="support"?"a":"")+'" onclick="window.COM_TAB=\'support\';R()">💬 Support kontaktieren</button></div></div>';
+      
+      if(window.COM_TAB === 'support') {
+        h+='<div style="max-width:600px;margin-top:24px;background:var(--bg2);padding:24px;border:1px solid var(--bd);border-radius:12px"><h3 style="margin-bottom:8px;font-size:16px;color:var(--t)">Support Anfrage Senden</h3><p style="margin-bottom:20px;font-size:13px;color:var(--t3);line-height:1.5">Hast du ein Problem mit dem Tracker oder eine Frage an den Support? Schreibe eine Nachricht, der Admin wird sich per E-Mail bei dir zurückmelden.</p><div class="fg"><label>Titel / Anliegen</label><input id="s-title" type="text" placeholder="Bsp: Problem beim Einloggen"></div><div class="fg"><label>Nachricht</label><textarea id="s-msg" style="width:100%;height:140px;padding:12px;border-radius:8px;border:1px solid var(--bd2);background:var(--bg);color:var(--t);font-family:inherit;font-size:14px;resize:vertical" placeholder="Bitte beschreibe dein Problem genauer..."></textarea></div><button id="s-btn" class="bt bp" style="width:100%;justify-content:center;padding:12px" onclick="hSupport()">Senden</button></div>';
+      } else {
+        let meta = window.FEAT_META || {};
+        let resetStr = meta.nextReset ? new Date(meta.nextReset).toLocaleString([], {weekday:'short', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '';
+        let infoStr = meta.canVoteGlobally ? '<span style="color:var(--g)">1 verbleibende Stimme für diese Woche</span>' : '<span style="color:var(--y)">Limit erreicht. Nächste Stimme ab: '+resetStr+'</span>';
+        
+        h+='<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:24px"><div style="flex:1"><h3 style="font-size:16px;margin-bottom:4px;color:var(--t)">Top Vorschläge</h3><p style="font-size:13px;color:var(--t3)">Gib eine Stimme für die Features ab, die du dir am meisten wünschst. <br><b style="font-weight:600;margin-top:4px;display:inline-block">'+infoStr+'</b></p></div><button class="bt bp" style="background:#191c24;border:1px solid var(--bd2);color:var(--g)" onclick="M.fnew=1;R()">+ Neuer Vorschlag</button></div>';
+        if(FEAT.length === 0) h+='<div class="emp">Noch keine bewilligten Vorschläge vorhanden.</div>';
+        else {
+          h+='<div style="display:flex;flex-direction:column;gap:16px">';
+          FEAT.forEach(f => {
+            let bdg = '';
+            if(f.status==='planned') bdg = '<span style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;text-transform:uppercase;background:var(--gb);color:var(--g)">In Entwicklung</span>';
+            if(f.status==='implemented') bdg = '<span style="padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;text-transform:uppercase;background:var(--bp-bg);color:var(--bp)">Erledigt</span>';
+            
+            let btnDisabled = (!f.has_voted && !meta.canVoteGlobally) ? 'opacity:0.3;cursor:not-allowed;' : 'cursor:pointer;';
+            let btnAction = (!f.has_voted && !meta.canVoteGlobally) ? '' : 'onclick="hVote(\''+f.id+'\')"';
+            
+            h+='<div style="display:flex;background:var(--bg2);border:1px solid var(--bd);border-radius:12px;padding:20px;gap:24px;align-items:flex-start"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:'+(f.has_voted?'rgba(59,130,246,0.1)':'var(--bg3)')+';padding:12px;border-radius:12px;min-width:64px;border:1px solid '+(f.has_voted?'rgba(59,130,246,0.2)':'transparent')+'"><button style="background:none;border:none;font-size:20px;color:'+(f.has_voted?'var(--bp)':'var(--t4)')+';'+btnDisabled+'" '+btnAction+'>▲</button><span style="font-weight:700;font-size:16px;color:'+(f.has_voted?'var(--bp)':'var(--t)')+';font-family:\'JetBrains Mono\',monospace">'+f.votes+'</span></div><div style="flex:1"><div style="font-size:18px;font-weight:600;color:var(--t);margin-bottom:8px;display:flex;align-items:center;gap:12px">'+es(f.title)+' '+bdg+'</div><div style="font-size:14px;color:var(--t2);line-height:1.6;margin-bottom:16px;white-space:pre-wrap">'+es(f.description)+'</div><div style="display:flex;gap:16px;align-items:center;font-size:12px;color:var(--t4);border-top:1px solid var(--bd);padding-top:16px"><span>Einreicher: '+es(f.author)+'</span><span>•</span><span>'+fd(f.createdat)+'</span></div></div></div>';
+          });
+          h+='</div>';
+        }
+      }
+    }
   }
 
   h += '</main>';
@@ -608,6 +712,7 @@ function R() {
   if(M.fefund){var fef=M.fefund;h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Funding bearbeiten</div><div class="fg"><label>Betrag (kumuliert)</label><input id="f-fefa" type="number" step="0.01" value="'+fef.amt+'"></div><div class="fg"><label>Notiz</label><input id="f-fefn" value="'+es(fef.nt)+'"></div><div class="fr"><div class="fg"><label>Datum</label><input id="f-fefd" type="date" value="'+fds(fef.dt)+'"></div><div class="fg"><label>Uhrzeit</label><input id="f-feft" type="time" value="'+fts(fef.dt)+'"></div></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hFefund()">Speichern</button></div></div></div>';}
   if(M.fclose){h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Position schliessen</div><div class="fg"><label>PNL Short-Seite (USDC)</label><input id="f-fcs" type="number" step="0.01"></div><div class="fg"><label>PNL Long-Seite (USDC / Spot)</label><input id="f-fcl" type="number" step="0.01"></div><div class="fg"><label>Fees (optional)</label><input id="f-fcf" type="number" step="0.01" value="0"></div><div class="fg"><label>Notiz</label><input id="f-fcn"></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt be" style="flex:1;justify-content:center" onclick="hFclose()">Schliessen</button></div></div></div>';}
   if(M.fprc){var ump=M.fprc.ump;h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Tokenpreis manuell setzen</div><div class="fg"><label class="sw"><input type="checkbox" id="f-ump" '+(ump?"checked":"")+' onchange="M.fprc.ump=this.checked?1:0;R()"><span class="sl2"></span></label> <span style="font-size:13px;margin-left:8px;vertical-align:super">Manuellen Preis verwenden</span></div>';if(ump){h+='<div class="fg" style="margin-top:10px"><label>Preis ($)</label><input id="f-mp" type="number" step="any" value="'+M.fprc.mp+'"></div>'}h+='<div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hFprc()">Speichern</button></div></div></div>'}
+  if(M.fnew){h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Neuer Feature-Vorschlag</div><p style="font-size:12px;color:var(--t4);margin-bottom:16px">Beschreibe deine Idee so genau wie möglich. Ein Admin wird den Vorschlag prüfen und zur Abstimmung freigeben.</p><div class="fg"><label>Titel (Kurz & Bündig)</label><input id="f-title" placeholder="z.B. Dark Mode Option"></div><div class="fg"><label>Details / Beschreibung</label><textarea id="f-desc" style="width:100%;height:100px;padding:8px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg);color:var(--t);font-family:inherit;font-size:13px;resize:vertical" placeholder="Ich hätte gerne..."></textarea></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hFeature()">Einreichen</button></div></div></div>';}
 
   var activeId=document.activeElement?document.activeElement.id:null, selStart=null, selEnd=null;
   if(activeId&&(document.activeElement.tagName==="INPUT"||document.activeElement.tagName==="TEXTAREA")){try{selStart=document.activeElement.selectionStart;selEnd=document.activeElement.selectionEnd;}catch(e){}}
