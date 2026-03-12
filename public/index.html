@@ -56,6 +56,8 @@ var LAST_WAKE_AT=Date.now();
 // Pagination & Search Flags
 var PG_ACT=1, PG_PAST=1, PG_FRFO=1, PG_FRFC=1;
 var SEARCH_PAST="", SEARCH_FRF="", ITEMS_PER_PAGE=12;
+var IS_DEMO = false;
+
 function setPgAct(p){PG_ACT=p;R()}
 function setPgPast(p){PG_PAST=p;R()}
 function setPgFrfO(p){PG_FRFO=p;R()}
