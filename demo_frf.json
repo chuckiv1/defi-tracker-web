@@ -2,71 +2,73 @@
   "exchanges": [
     {
       "id": "demo_ex_1",
-      "name": "CryptoX"
+      "name": "CryptoX",
+      "marginHistory": [
+        { "id": "dm1a", "amount": 5000, "date": "2024-01-01T10:00:00.000Z", "note": "Initial Deposit" }
+      ]
     },
     {
       "id": "demo_ex_2",
-      "name": "TradeSphere"
-    },
-    {
-      "id": "demo_ex_3",
-      "name": "MoonDEX"
+      "name": "TradeSphere",
+      "marginHistory": [
+        { "id": "dm2a", "amount": 3000, "date": "2024-02-01T10:00:00.000Z", "note": "Initial Deposit" }
+      ]
     }
   ],
   "positions": [
     {
       "id": "demo_pos_1",
-      "exchangeId": "demo_ex_1",
-      "type": "long",
-      "pair": "BTC/USDT",
-      "entryPrice": 45000,
-      "amount": 0.5,
-      "leverage": 10,
-      "date": "2024-02-15T08:30:00.000Z",
-      "status": "open",
-      "notes": "Swing trade targeting previous ATH"
+      "type": "frf",
+      "token": "BTC",
+      "tokenAmount": 0.5,
+      "positionSizeUsd": 22500,
+      "entryPriceShort": 45000,
+      "entryPriceLong": 44800,
+      "shortExchangeId": "demo_ex_1",
+      "longExchangeId": "demo_ex_2",
+      "longIsSpot": false,
+      "fees": 15,
+      "linkedStrategyId": "",
+      "startDate": "2024-02-15T08:30:00.000Z",
+      "endedAt": null,
+      "closePnlShort": null,
+      "closePnlLong": null,
+      "closeNote": "",
+      "manualPrice": 0,
+      "useManualPrice": false,
+      "includeInStrategy": false,
+      "fundingShort": [
+        { "id": "dfs1a", "amount": 120, "date": "2024-03-01T12:00:00.000Z", "note": "Funding collected" }
+      ],
+      "fundingLong": [
+        { "id": "dfl1a", "amount": -30, "date": "2024-03-01T12:00:00.000Z", "note": "Funding paid" }
+      ]
     },
     {
       "id": "demo_pos_2",
-      "exchangeId": "demo_ex_2",
-      "type": "short",
-      "pair": "DOGE/USDT",
-      "entryPrice": 0.15,
-      "amount": 100000,
-      "leverage": 5,
-      "date": "2024-03-05T14:45:00.000Z",
-      "status": "open",
-      "notes": "Fading the recent meme pump"
-    },
-    {
-      "id": "demo_pos_3",
-      "exchangeId": "demo_ex_1",
-      "type": "long",
-      "pair": "ETH/USDT",
-      "entryPrice": 2200,
-      "amount": 5,
-      "leverage": 3,
-      "date": "2024-01-10T09:15:00.000Z",
-      "exitPrice": 3100,
-      "exitDate": "2024-03-01T11:00:00.000Z",
-      "status": "closed",
-      "pnl": 4500,
-      "notes": "Target hit successfully"
-    },
-    {
-      "id": "demo_pos_4",
-      "exchangeId": "demo_ex_3",
-      "type": "short",
-      "pair": "SOL/USDT",
-      "entryPrice": 110,
-      "amount": 100,
-      "leverage": 2,
-      "date": "2024-02-20T16:20:00.000Z",
-      "exitPrice": 135,
-      "exitDate": "2024-02-28T10:00:00.000Z",
-      "status": "closed",
-      "pnl": -2500,
-      "notes": "Stopped out due to unexpected breakout"
+      "type": "hedge",
+      "token": "ETH",
+      "tokenAmount": 5,
+      "positionSizeUsd": 11000,
+      "entryPriceShort": 2200,
+      "entryPriceLong": 2180,
+      "shortExchangeId": "demo_ex_1",
+      "longExchangeId": "",
+      "longIsSpot": true,
+      "fees": 10,
+      "linkedStrategyId": "demo_strat_1",
+      "startDate": "2024-01-10T09:15:00.000Z",
+      "endedAt": "2024-03-01T11:00:00.000Z",
+      "closePnlShort": -450,
+      "closePnlLong": 460,
+      "closeNote": "Target hit",
+      "manualPrice": 0,
+      "useManualPrice": false,
+      "includeInStrategy": false,
+      "fundingShort": [
+        { "id": "dfs2a", "amount": 80, "date": "2024-02-15T12:00:00.000Z", "note": "Funding" }
+      ],
+      "fundingLong": []
     }
   ]
 }
