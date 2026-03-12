@@ -381,6 +381,7 @@ function R() {
       else{if(VW==="list"){h+='<div class="lt"><div class="lt-hdr" style="column-gap:16px"><span>Name</span><span style="text-align:right">Invest</span><span style="text-align:right">Rewards</span><span style="text-align:right">PNL</span><span style="text-align:right;padding-right:16px">Laufzeit</span><span style="text-align:center">APR</span><span></span></div>';pa.forEach(function(s){h+=cardH(s,true)});h+='</div>'}else{h+='<div class="gd">';pa.forEach(function(s){h+=cardH(s,true)});h+='</div>'}}
     }
     else if(V === 'detail' && se) {
+      var _ci=ci(se), _tr=tr(se), _tp=tp(se,false), _d=db(se.startDate,se.endedAt||nw), _a=wa(se,se.endedAt||nw), ps=bp(se,se.endedAt||nw);
       h+='<button class="bt bk" onclick="SI=null;V=\''+(se.endedAt?"past":"active")+'\';R()">← Zurueck</button>';
       h+='<div class="dhd"><div><div class="dhn">'+es(se.name)+'</div><span class="bdg '+(se.endedAt?"en":"ac")+'">'+(se.endedAt?"Beendet":"Aktiv")+'</span>';
       var linkedPos = FR.positions.filter(function(p){return p.linkedStrategyId===se.id});
