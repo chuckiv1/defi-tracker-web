@@ -28,6 +28,13 @@ async function initDB() {
         frf JSONB DEFAULT '{"exchanges": [], "positions": []}'::jsonb,
         undo JSONB DEFAULT '[]'::jsonb
       );
+
+      CREATE TABLE IF NOT EXISTS account_logins (
+        id VARCHAR(50) PRIMARY KEY,
+        accountId VARCHAR(50) REFERENCES accounts(id) ON DELETE CASCADE,
+        loginDate DATE NOT NULL,
+        UNIQUE(accountId, loginDate)
+      );
     `);
     console.log("✅ Database initialized successfully.");
   } catch (err) {

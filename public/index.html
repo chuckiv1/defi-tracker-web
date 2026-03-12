@@ -45,9 +45,23 @@
 <body>
 <div id="app"><div class="ld"><div class="sp"></div></div></div>
 <script>
-var AUTH={loggedIn:false, account:null, profiles:[]}, PID=null, S=[], FR={exchanges:[],positions:[]}, U=[], V="active", SI=null, FPI=null, M={};
-var VW="grid", STRAT_SORT="size", FRF_SORT="size", EXP={}, UD=false, PRICES={}, FRFV="open", IS_DEMO=false;
-var UI_KEY_BASE="defi_vault_ui_state", LAST_RENDER_AT=0, LAST_WAKE_AT=0;
+var AUTH={loggedIn:false, account:null, profiles:[]}, PID=null, S=[], FR={exchanges:[], positions:[]}, U=[];
+var V="active", FRFV="open", SI=null, FPI=null, UD=false;
+var VW="grid", STRAT_SORT="size", FRF_SORT="size";
+var M={};
+var PRICES={};
+var EXP={};
+var LAST_WAKE_AT=Date.now();
+
+// Pagination & Search Flags
+var PG_ACT=1, PG_PAST=1, PG_FRFO=1, PG_FRFC=1;
+var SEARCH_PAST="", SEARCH_FRF="", ITEMS_PER_PAGE=12;
+function setPgAct(p){PG_ACT=p;R()}
+function setPgPast(p){PG_PAST=p;R()}
+function setPgFrfO(p){PG_FRFO=p;R()}
+function setPgFrfC(p){PG_FRFC=p;R()}
+
+var UI_KEY_BASE="defi_vault_ui_state", LAST_RENDER_AT=0;
 var CG_MAP={bitcoin:"BTC",ethereum:"ETH",solana:"SOL",avalanche:"AVAX",pendle:"PENDLE",chainlink:"LINK",arbitrum:"ARB",optimism:"OP",uniswap:"UNI",aave:"AAVE",tether_gold:"XAUT",coinbase_wrapped_btc:"cbBTC",wrapped_bitcoin:"WBTC",berachain:"BERA",monad:"WMON"};
 var CG_REV={}; for(let k in CG_MAP) CG_REV[CG_MAP[k].toUpperCase()] = k;
 
@@ -136,7 +150,6 @@ function fetchPrices(){
 
 function api(url, opts={}) {
   if (IS_DEMO && opts.method && opts.method.toUpperCase() !== 'GET' && !url.includes('/api/auth')) {
-    alert("In der Demo-Version können keine Änderungen gespeichert werden. Bitte registriere dich oder logge dich ein.");
     return Promise.reject(new Error("demo_blocked"));
   }
 
@@ -156,7 +169,6 @@ function api(url, opts={}) {
 
 function F(u, o={}) {
   if (IS_DEMO && o.method && o.method.toUpperCase() !== 'GET' && !u.includes('/api/auth')) {
-    alert("In der Demo-Version können keine Änderungen gespeichert werden. Bitte registriere dich oder logge dich ein.");
     return Promise.reject(new Error("demo_blocked"));
   }
 
@@ -234,7 +246,7 @@ function hReg() {
   let e = document.getElementById('r-email').value, p1 = document.getElementById('r-p1').value, p2 = document.getElementById('r-p2').value;
   if(p1!==p2) return alert("Passwörter stimmen nicht überein!");
   api('/api/auth/register', {method:'POST', body: JSON.stringify({email:e, password:p1})}).then(r => {
-    if(r.status===200) { cm(); alert("Registrierung erfolgreich! Bitte prüfe deine E-Mails (bzw. die Server-Konsole für den Link)."); } else alert(r.data.error);
+    if(r.status===200) { cm(); alert("Registrierung erfolgreich! Bitte prüfe deine E-Mails für den Bestätigungslink."); } else alert(r.data.error);
   }).catch(()=>{});
 }
 
@@ -244,9 +256,67 @@ function rBack() { let input = document.createElement('input'); input.type = 'fi
 function hNewProf() { let n = document.getElementById('p-name').value; if(!n)return; api('/api/profiles', {method:'POST', body: JSON.stringify({name:n})}).then(r => { setPid(r.data.id); }); }
 function delProf(id) { if(!confirm("Profil und alle zugehörigen Strategien wirklich löschen?")) return; api('/api/profiles/'+id, {method:'DELETE'}).then(() => { if(PID===id) setPid(null); else loadData(); }); }
 
-function adminTgl(id) { api('/api/admin/accounts/'+id+'/toggle-block', {method:'PUT'}).then(()=>loadAdmin()); }
-function adminDel(id) { if(confirm("Account GANZ löschen?")) api('/api/admin/accounts/'+id, {method:'DELETE'}).then(()=>loadAdmin()); }
-function loadAdmin() { api('/api/admin/accounts').then(r=>{M.accs=r.data; R()}); }
+var ADM_SORT = "newest", ADM_SEARCH = "";
+
+function loadAdmin() { 
+  api('/api/admin/accounts').then(r=>{M.accs=r.data; R()}); 
+}
+function adminTgl(id) { 
+  if(!confirm("Account Sperr-Status wirklich ändern?")) return;
+  api('/api/admin/accounts/'+id+'/toggle-block', {method:'PUT'}).then(() => {
+    M.adet = null; loadAdmin();
+  }); 
+}
+function adminDel(id) { 
+  if(!confirm("ACHTUNG: Account und ALLE zugehörigen Daten unwiderruflich löschen?")) return;
+  api('/api/admin/accounts/'+id, {method:'DELETE'}).then(() => {
+    M.adet = null; loadAdmin();
+  }); 
+}
+function openAdminDetail(accId) {
+  var acc = (M.accs||[]).find(a => a.id === accId);
+  if(!acc) return;
+  M.adet = { acc: acc, stats: [], tf: 30 }; // tf = timeframe in days
+  R();
+  api('/api/admin/accounts/'+accId+'/stats').then(r => {
+    if(M.adet && M.adet.acc.id === accId) {
+      M.adet.stats = r.data || [];
+      R();
+      setTimeout(renderAdminChart, 50);
+    }
+  });
+}
+function renderAdminChart() {
+  if(!M.adet || !document.getElementById('admin-chart')) return;
+  var cvs = document.getElementById('admin-chart'), ctx = cvs.getContext('2d');
+  cvs.width = cvs.offsetWidth * 2; cvs.height = cvs.offsetHeight * 2; ctx.scale(2,2);
+  var w = cvs.offsetWidth, h = cvs.offsetHeight;
+  ctx.clearRect(0,0,w,h);
+  
+  var tf = M.adet.tf, stats = M.adet.stats;
+  var counts = [], maxC = 0, now = Date.now();
+  for(var i=tf-1; i>=0; i--) {
+    let dStr = new Date(now - i*864e5).toISOString().split('T')[0];
+    let c = stats.filter(s => s.startsWith(dStr)).length;
+    counts.push(c);
+    if(c > maxC) maxC = c;
+  }
+  
+  if(maxC === 0) {
+    ctx.fillStyle = '#8a8f98'; ctx.font = '12px "DM Sans"'; ctx.textAlign = 'center';
+    ctx.fillText("Keine Aktivität in diesem Zeitraum", w/2, h/2+4);
+    return;
+  }
+  
+  var barW = (w / tf) - 2; if(barW < 2) barW = 2;
+  ctx.fillStyle = '#00e5a0';
+  counts.forEach((c, idx) => {
+    if(c === 0) return;
+    var bh = (c / maxC) * (h - 20);
+    var bx = Math.max(0, idx * (w / tf));
+    ctx.fillRect(bx, h - bh, barW, bh);
+  });
+}
 
 // Handlers
 function endS(id){F("/api/strategies/"+id+"/end",{method:"PUT"}).then(()=>{if(SI===id){SI=null;V="past"}loadData()})}
@@ -300,12 +370,16 @@ function R() {
   function cardH(s,isP){
     var d=db(s.startDate,isP?s.endedAt:nw),a=wa(s,isP?s.endedAt:nw),c=ci(s),tk=s.token?'<span class="tkb">'+es(s.token.name)+'</span>':"",pv=tp(s,false),incl=stratIncl(s),tgl='<span style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--t4)" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" '+(incl?"checked":"")+' onchange="togStratApr(\''+s.id+'\')"><span class="sl2"></span></label></span>';
     if(VW==="list"){
-      var hl='<div class="lt-row'+(incl?'':' pia')+'" style="column-gap:16px" onclick="SI=\''+s.id+'\';V=\'detail\';R()"><span class="lt-name">'+es(s.name)+tk+'</span><span class="lt-val">'+fn(c)+'</span><span class="lt-val g">+'+fn(tr(s))+'</span><span class="lt-val '+(pv>=0?"g":"r")+'">'+(pv!==0?(pv>=0?"+":"")+fn(pv):"-")+'</span><span class="lt-val" style="padding-right:16px">'+d.toFixed(1)+' T</span><span class="lt-apr'+((isP||a<0)?" mt":"")+'">'+a.toFixed(1)+'%</span><span class="lt-act">'+tgl;
+      var hl='<div class="lt-row'+(incl?'':' pia')+'" style="column-gap:16px" onclick="SI=\''+s.id+'\';V=\'detail\';R()"><span class="lt-name">'+es(s.name)+tk+'</span><span class="lt-val">'+fn(c)+'</span><span class="lt-val g">+'+fn(tr(s))+'</span><span class="lt-val '+(pv>=0?"g":"r")+'">'+(pv!==0?(pv>=0?"+":"")+fn(pv):"-")+'</span><span class="lt-val" style="padding-right:16px">'+d.toFixed(1)+' T</span>';
+      if(!isP) hl+='<span class="lt-apr'+(a<0?" mt":"")+'">'+a.toFixed(1)+'%</span>';
+      hl+='<span class="lt-act">'+tgl;
       if(!isP)hl+='<button class="bt be" onclick="event.stopPropagation();endS(\''+s.id+'\')">End</button>';
       else hl+='<button class="bt bb" onclick="event.stopPropagation();reaS(\''+s.id+'\')">↩</button><button class="bt be" onclick="event.stopPropagation();delS(\''+s.id+'\')">X</button>';
       hl+='</span></div>'; return hl;
     }
-    var hc='<div class="cd'+(incl?'':' pia')+'" onclick="SI=\''+s.id+'\';V=\'detail\';R()"><div class="cdh"><h3 class="cdn">'+es(s.name)+tk+'</h3><span class="cda'+((isP||a<0)?" mt":"")+'">'+a.toFixed(1)+'%</span></div><div class="cdb"><div class="cdr"><span class="cdl">Investment</span><span class="cdv">'+fn(c)+'</span></div><div class="cdr"><span class="cdl">Rewards</span><span class="cdv g">+'+fn(tr(s))+'</span></div>';
+    var hc='<div class="cd'+(incl?'':' pia')+'" onclick="SI=\''+s.id+'\';V=\'detail\';R()"><div class="cdh"><h3 class="cdn">'+es(s.name)+tk+'</h3>';
+    if(!isP) hc+='<span class="cda'+(a<0?" mt":"")+'">'+a.toFixed(1)+'%</span>';
+    hc+='</div><div class="cdb"><div class="cdr"><span class="cdl">Investment</span><span class="cdv">'+fn(c)+'</span></div><div class="cdr"><span class="cdl">Rewards</span><span class="cdv g">+'+fn(tr(s))+'</span></div>';
     if(pv!==0)hc+='<div class="cdr"><span class="cdl">PNL</span><span class="cdv '+(pv>=0?"g":"r")+'">'+(pv>=0?"+":"")+fn(pv)+'</span></div>';
     hc+='<div class="cdr"><span class="cdl">Laufzeit</span><span class="cdv">'+d.toFixed(1)+' T</span></div>';
     if(isP)hc+='<div class="cdr"><span class="cdl">Beendet</span><span class="cdv">'+fd(s.endedAt)+'</span></div>';
@@ -313,6 +387,16 @@ function R() {
     if(!isP)hc+='<button class="bt be" onclick="event.stopPropagation();endS(\''+s.id+'\')">Beenden</button>';
     else hc+='<button class="bt bb" onclick="event.stopPropagation();reaS(\''+s.id+'\')">Reaktivieren</button><button class="bt be" onclick="event.stopPropagation();delS(\''+s.id+'\')">Loeschen</button>';
     hc+='<span style="font-size:11px;color:var(--t5)">→</span></div></div>'; return hc;
+  }
+  
+  function pgNav(total, curPg, setPgFn) {
+    if(total <= ITEMS_PER_PAGE) return '';
+    var m = Math.ceil(total/ITEMS_PER_PAGE);
+    var h = '<div style="display:flex;gap:4px;justify-content:center;margin-top:20px">';
+    h += '<button class="bt" style="padding:4px 8px;font-size:12px;background:var(--bg2)" '+(curPg<=1?'disabled':'')+' onclick="'+setPgFn+'('+(curPg-1)+')">←</button>';
+    h += '<span style="font-size:12px;color:var(--t2);padding:4px 8px">'+curPg+' / '+m+'</span>';
+    h += '<button class="bt" style="padding:4px 8px;font-size:12px;background:var(--bg2)" '+(curPg>=m?'disabled':'')+' onclick="'+setPgFn+'('+(curPg+1)+')">→</button>';
+    return h + '</div>';
   }
 
   let h = '';
@@ -359,26 +443,40 @@ function R() {
 
     if(!PID && V!=='admin') h += '<div class="emp">Bitte wähle rechts oben ein Profil (Wallet) aus oder erstelle ein neues.</div>';
     else if(V === 'admin') {
-      h += '<h2 class="st" style="margin-bottom:16px">Admin Dashboard</h2><div class="tbl"><div class="tblh"><span style="flex:3">E-Mail</span><span style="flex:1">Status</span><span style="flex:1">Profile</span><span style="flex:1">Rolle</span><span style="width:100px;text-align:right">Aktion</span></div>';
-      (M.accs||[]).forEach(a => {
-        h += '<div class="tblr"><span style="flex:3;font-size:13px;color:var(--t2)">'+es(a.email)+'</span><span style="flex:1;font-size:12px">'+(a.isVerified?'<span style="color:var(--g)">Aktiv</span>':'<span style="color:var(--y)">Warten</span>')+' '+(a.isBlocked?'<b style="color:var(--r)">(Gesperrt)</b>':'')+'</span><span style="flex:1;font-size:12px;color:var(--t2)">'+a.profileCount+'</span><span style="flex:1;font-size:12px;color:var(--t4)">'+es(a.role)+'</span><span style="width:100px;display:flex;gap:4px;justify-content:flex-end">';
-        if(a.role !== 'admin') h+= '<button class="bt bb" style="padding:4px 8px;font-size:10px" onclick="adminTgl(\''+a.id+'\')">Sperren</button><button class="bt be" style="padding:4px 8px;font-size:10px" onclick="adminDel(\''+a.id+'\')">Del</button>';
-        h += '</span></div>';
+      h += '<div class="sh" style="margin-bottom:16px"><h2 class="st">Admin Dashboard</h2><div style="display:flex;gap:8px;align-items:center"><input type="text" placeholder="Suche (Email)..." value="'+es(ADM_SEARCH)+'" oninput="ADM_SEARCH=this.value;R()" style="width:180px;padding:8px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t)"><select style="width:160px" onchange="ADM_SORT=this.value;R()"><option value="newest" '+(ADM_SORT==="newest"?"selected":"")+'>Neueste zuerst</option><option value="az" '+(ADM_SORT==="az"?"selected":"")+'>A-Z</option><option value="usage" '+(ADM_SORT==="usage"?"selected":"")+'>Häufigste Nutzung</option></select></div></div><div class="tbl"><div class="tblh"><span style="flex:3">E-Mail</span><span style="flex:1">Status</span><span style="flex:1">Profile</span><span style="flex:1">Logins (30d)</span><span style="flex:1">Rolle</span></div>';
+      var shownAccs = (M.accs||[]).filter(a => !ADM_SEARCH || a.email.toLowerCase().includes(ADM_SEARCH.toLowerCase()));
+      shownAccs.sort((a,b) => {
+        if(ADM_SORT === "newest") return new Date(b.createdat).getTime() - new Date(a.createdat).getTime();
+        if(ADM_SORT === "az") return a.email.localeCompare(b.email);
+        if(ADM_SORT === "usage") return (b.loginCount30d||0) - (a.loginCount30d||0);
+        return 0;
+      });
+      shownAccs.forEach(a => {
+        h += '<div class="tblr" style="cursor:pointer" onclick="openAdminDetail(\''+a.id+'\')"><span style="flex:3;font-size:13px;color:var(--t2)">'+es(a.email)+'</span><span style="flex:1;font-size:12px">'+(a.isverified?'<span style="color:var(--g)">Aktiv</span>':'<span style="color:var(--y)">Wartend</span>')+' '+(a.isblocked?'<b style="color:var(--r)">(Gesperrt)</b>':'')+'</span><span style="flex:1;font-size:12px;color:var(--t2)">'+a.profileCount+'</span><span style="flex:1;font-size:12px;color:var(--t2)">'+(a.loginCount30d||0)+'</span><span style="flex:1;font-size:12px;color:var(--t4)">'+es(a.role)+'</span></div>';
       });
       h += '</div>';
     }
     else if(V === 'active') {
       h+='<div class="sm"><div class="sc"><span class="sl">Investment</span><span class="sv">'+fn(ti)+' <span class="u">USDC</span></span></div><div class="sc"><span class="sl">Gains</span><span class="sv g">+'+fn(trw)+' <span class="u">USDC</span></span></div><div class="sc"><span class="sl">APR gesamt</span><span class="sv'+(wA>0?" g":"")+'">'+wA.toFixed(2)+'%</span></div><div class="sc"><span class="sl">Strategien</span><span class="sv">'+av.length+'</span></div></div>';
-      h+='<div class="sh"><h2 class="st">Aktive Strategien</h2><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><select style="width:155px" onchange="STRAT_SORT=this.value;R()"><option value="size" '+(STRAT_SORT==="size"?"selected":"")+'>Positionsgroesse</option><option value="az" '+(STRAT_SORT==="az"?"selected":"")+'>A-Z</option><option value="za" '+(STRAT_SORT==="za"?"selected":"")+'>Z-A</option><option value="apr" '+(STRAT_SORT==="apr"?"selected":"")+'>APR</option><option value="runtime" '+(STRAT_SORT==="runtime"?"selected":"")+'>Laufzeit</option></select><div class="vtg"><button class="'+(VW==="grid"?"a":"")+'" onclick="VW=\'grid\';R()">▦</button><button class="'+(VW==="list"?"a":"")+'" onclick="VW=\'list\';R()">☰</button></div><button class="bt bp" onclick="M.cr=1;R()"><span style="font-size:17px">+</span> Neu</button></div></div>';
+      h+='<div class="sh"><h2 class="st">Aktive Strategien</h2><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><select style="width:155px" onchange="STRAT_SORT=this.value;PG_ACT=1;R()"><option value="size" '+(STRAT_SORT==="size"?"selected":"")+'>Positionsgroesse</option><option value="az" '+(STRAT_SORT==="az"?"selected":"")+'>A-Z</option><option value="za" '+(STRAT_SORT==="za"?"selected":"")+'>Z-A</option><option value="apr" '+(STRAT_SORT==="apr"?"selected":"")+'>APR</option><option value="runtime" '+(STRAT_SORT==="runtime"?"selected":"")+'>Laufzeit</option></select><div class="vtg"><button class="'+(VW==="grid"?"a":"")+'" onclick="VW=\'grid\';R()">▦</button><button class="'+(VW==="list"?"a":"")+'" onclick="VW=\'list\';R()">☰</button></div><button class="bt bp" onclick="M.cr=1;R()"><span style="font-size:17px">+</span> Neu</button></div></div>';
       if(!av.length)h+='<div class="emp">Keine aktiven Strategien.</div>';
-      else{if(VW==="list"){h+='<div class="lt"><div class="lt-hdr" style="column-gap:16px"><span>Name</span><span style="text-align:right">Invest</span><span style="text-align:right">Rewards</span><span style="text-align:right">PNL</span><span style="text-align:right;padding-right:16px">Laufzeit</span><span style="text-align:center">APR</span><span></span></div>';av.forEach(function(s){h+=cardH(s,false)});h+='</div>'}else{h+='<div class="gd">';av.forEach(function(s){h+=cardH(s,false)});h+='</div>'}}
+      else{
+        var pgAV = av.slice((PG_ACT-1)*ITEMS_PER_PAGE, PG_ACT*ITEMS_PER_PAGE);
+        if(VW==="list"){h+='<div class="lt"><div class="lt-hdr" style="column-gap:16px"><span>Name</span><span style="text-align:right">Invest</span><span style="text-align:right">Rewards</span><span style="text-align:right">PNL</span><span style="text-align:right;padding-right:16px">Laufzeit</span><span style="text-align:center">APR</span><span></span></div>';pgAV.forEach(function(s){h+=cardH(s,false)});h+='</div>'}else{h+='<div class="gd">';pgAV.forEach(function(s){h+=cardH(s,false)});h+='</div>'}
+        h += pgNav(av.length, PG_ACT, 'setPgAct');
+      }
     }
     else if(V === 'past') {
       h+='<h2 class="st" style="margin-bottom:14px">Vergangene Strategien</h2><div class="pgd">';
       [7,14,30,90,180,365].forEach(function(d){var p=pbp(d);h+='<div class="pcd"><span class="pcl">'+d+'d</span><span class="pca'+(p.a>0?" g":"")+'">'+p.a.toFixed(2)+'%</span><span class="pcr">+'+fn(p.r)+'</span><span class="pcc">'+p.c+' Strat.</span></div>'});h+='</div>';
-      h+='<div class="sh"><div></div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><select style="width:155px" onchange="STRAT_SORT=this.value;R()"><option value="size" '+(STRAT_SORT==="size"?"selected":"")+'>Positionsgroesse</option><option value="az" '+(STRAT_SORT==="az"?"selected":"")+'>A-Z</option><option value="za" '+(STRAT_SORT==="za"?"selected":"")+'>Z-A</option><option value="apr" '+(STRAT_SORT==="apr"?"selected":"")+'>APR</option><option value="runtime" '+(STRAT_SORT==="runtime"?"selected":"")+'>Laufzeit</option></select><div class="vtg"><button class="'+(VW==="grid"?"a":"")+'" onclick="VW=\'grid\';R()">▦</button><button class="'+(VW==="list"?"a":"")+'" onclick="VW=\'list\';R()">☰</button></div></div></div>';
-      if(!pa.length)h+='<div class="emp">Keine vergangenen Strategien.</div>';
-      else{if(VW==="list"){h+='<div class="lt"><div class="lt-hdr" style="column-gap:16px"><span>Name</span><span style="text-align:right">Invest</span><span style="text-align:right">Rewards</span><span style="text-align:right">PNL</span><span style="text-align:right;padding-right:16px">Laufzeit</span><span style="text-align:center">APR</span><span></span></div>';pa.forEach(function(s){h+=cardH(s,true)});h+='</div>'}else{h+='<div class="gd">';pa.forEach(function(s){h+=cardH(s,true)});h+='</div>'}}
+      h+='<div class="sh"><div></div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input type="text" placeholder="Suche..." value="'+es(SEARCH_PAST)+'" oninput="SEARCH_PAST=this.value;PG_PAST=1;R()" style="width:140px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t);font-size:13px"><select style="width:155px" onchange="STRAT_SORT=this.value;PG_PAST=1;R()"><option value="size" '+(STRAT_SORT==="size"?"selected":"")+'>Positionsgroesse</option><option value="az" '+(STRAT_SORT==="az"?"selected":"")+'>A-Z</option><option value="za" '+(STRAT_SORT==="za"?"selected":"")+'>Z-A</option><option value="apr" '+(STRAT_SORT==="apr"?"selected":"")+'>APR</option><option value="runtime" '+(STRAT_SORT==="runtime"?"selected":"")+'>Laufzeit</option></select><div class="vtg"><button class="'+(VW==="grid"?"a":"")+'" onclick="VW=\'grid\';R()">▦</button><button class="'+(VW==="list"?"a":"")+'" onclick="VW=\'list\';R()">☰</button></div></div></div>';
+      var fPA = SEARCH_PAST ? pa.filter(s => s.name.toLowerCase().includes(SEARCH_PAST.toLowerCase()) || (s.token && s.token.name.toLowerCase().includes(SEARCH_PAST.toLowerCase()))) : pa;
+      if(!fPA.length)h+='<div class="emp">Keine vergangenen Strategien gefunden.</div>';
+      else{
+        var pgPA = fPA.slice((PG_PAST-1)*ITEMS_PER_PAGE, PG_PAST*ITEMS_PER_PAGE);
+        if(VW==="list"){h+='<div class="lt"><div class="lt-hdr" style="column-gap:16px"><span>Name</span><span style="text-align:right">Invest</span><span style="text-align:right">Rewards</span><span style="text-align:right">PNL</span><span style="text-align:right;padding-right:16px">Laufzeit</span><span style="text-align:center">APR</span><span></span></div>';pgPA.forEach(function(s){h+=cardH(s,true)});h+='</div>'}else{h+='<div class="gd">';pgPA.forEach(function(s){h+=cardH(s,true)});h+='</div>'}
+        h += pgNav(fPA.length, PG_PAST, 'setPgPast');
+      }
     }
     else if(V === 'detail' && se) {
       var _ci=ci(se), _tr=tr(se), _tp=tp(se,false), _d=db(se.startDate,se.endedAt||nw), _a=wa(se,se.endedAt||nw), ps=bp(se,se.endedAt||nw);
@@ -437,10 +535,19 @@ function R() {
         if(ex.marginHistory.length>1){h+='<button class="col-btn'+(isO?" open":"")+'" onclick="tgl(\''+ek+'\')"><span class="arr">▼</span> '+ex.marginHistory.length+' Margin-Eintraege</button><div class="col-ct'+(isO?" open":"")+'">';h+='<div class="tbl" style="margin-top:8px"><div class="tblh"><span style="flex:1">Datum</span><span style="flex:1">Notiz</span><span style="flex:1;text-align:right">Betrag</span><span style="width:56px"></span></div>';ex.marginHistory.slice().reverse().forEach(function(m){h+='<div class="tblr"><span style="flex:1;font-size:12px;color:var(--t2)">'+fd(m.date)+'</span><span style="flex:1;font-size:12px;color:var(--t3)">'+es(m.note||"")+'</span><span style="flex:1;text-align:right;font-family:\'JetBrains Mono\',monospace;font-size:13px;font-weight:500;color:'+(m.amount>=0?"var(--g)":"var(--r)")+'">'+(m.amount>=0?"+":"")+fn(m.amount)+'</span><span style="width:56px;text-align:right;display:flex;gap:2px"><button class="bt bed" onclick="M.femm={eid:\''+ex.id+'\',mid:\''+m.id+'\',amt:'+m.amount+',nt:\''+es(m.note||"")+'\',dt:\''+m.date+'\'};R()">✎</button><button class="bt bic" onclick="F(\'/api/frf/exchanges/'+ex.id+'/margin/'+m.id+'\',{method:\'DELETE\'}).then(loadData)">✕</button></span></div>'});h+='</div></div>';}
         h+='</div>';
       });
-      h+='<div class="sh" style="margin-top:24px"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><h2 class="st">Positionen</h2><div class="vtg" style="margin-left:8px"><button class="'+(window.FRFV==="open"?"a":"")+'" onclick="window.FRFV=\'open\';R()">Offen ('+openPos.length+')</button><button class="'+(window.FRFV==="closed"?"a":"")+'" onclick="window.FRFV=\'closed\';R()">Vergangen ('+closedPos.length+')</button></div></div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><select style="width:155px" onchange="FRF_SORT=this.value;R()"><option value="size" '+(FRF_SORT==="size"?"selected":"")+'>Positionsgroesse</option><option value="az" '+(STRAT_SORT==="az"?"selected":"")+'>A-Z</option><option value="za" '+(STRAT_SORT==="za"?"selected":"")+'>Z-A</option><option value="apr" '+(STRAT_SORT==="apr"?"selected":"")+'>APR</option><option value="runtime" '+(STRAT_SORT==="runtime"?"selected":"")+'>Laufzeit</option></select><button class="bt bo" onclick="M.fpos=1;R()"><span style="font-size:17px">+</span> Position</button></div></div>';
+      h+='<div class="sh" style="margin-top:24px"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><h2 class="st">Positionen</h2><div class="vtg" style="margin-left:8px"><button class="'+(window.FRFV==="open"?"a":"")+'" onclick="window.FRFV=\'open\';PG_FRFO=1;PG_FRFC=1;R()">Offen ('+openPos.length+')</button><button class="'+(window.FRFV==="closed"?"a":"")+'" onclick="window.FRFV=\'closed\';PG_FRFO=1;PG_FRFC=1;R()">Vergangen ('+closedPos.length+')</button></div></div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input type="text" placeholder="Suche..." value="'+es(SEARCH_FRF)+'" oninput="SEARCH_FRF=this.value;PG_FRFO=1;PG_FRFC=1;R()" style="width:140px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t);font-size:13px"><select style="width:155px" onchange="FRF_SORT=this.value;PG_FRFO=1;PG_FRFC=1;R()"><option value="size" '+(FRF_SORT==="size"?"selected":"")+'>Positionsgroesse</option><option value="az" '+(STRAT_SORT==="az"?"selected":"")+'>A-Z</option><option value="za" '+(STRAT_SORT==="za"?"selected":"")+'>Z-A</option><option value="apr" '+(STRAT_SORT==="apr"?"selected":"")+'>APR</option><option value="runtime" '+(STRAT_SORT==="runtime"?"selected":"")+'>Laufzeit</option></select><button class="bt bo" onclick="M.fpos=1;R()"><span style="font-size:17px">+</span> Position</button></div></div>';
       var shownPos=sortFrf(window.FRFV==="open"?openPos:closedPos);
-      if(!shownPos.length)h+='<div class="emp">'+(window.FRFV==="open"?'Keine offenen Positionen.':'Keine vergangenen Positionen.')+'</div>';
-      else{h+='<div class="lt"><div class="lt-hdr" style="grid-template-columns:1.2fr 1.2fr 1fr .88fr 90px;column-gap:18px"><span>Token</span><span style="text-align:right">Pos.-Groesse</span><span style="text-align:right">Tokenmenge</span><span style="text-align:right;padding-right:14px">PNL aktuell</span><span style="text-align:center">APR</span></div>';shownPos.forEach(function(p){var pnl=posPnl(p),d=db(p.startDate,p.endedAt||nw),cap=posCapital(p),a=calcApr(pnl-(p.fees||0),cap,d),liveSize=posLiveSize(p);h+='<div class="lt-row'+(posIncl(p)?'':' pia')+'" style="grid-template-columns:1.2fr 1.2fr 1fr .88fr 90px;column-gap:18px" onclick="FPI=\''+p.id+'\';V=\'frf_pos\';R()"><span class="lt-name">'+es(p.token)+(p.endedAt?'<span class="tkb">zu</span>':'')+'</span><span class="lt-val">'+fn(liveSize)+'</span><span class="lt-val">'+fn(p.tokenAmount)+'</span><span class="lt-val '+(pnl>=0?'g':'r')+'" style="padding-right:14px">'+(pnl>=0?'+':'')+fn(pnl)+'</span><span class="lt-apr'+(a<0?' mt':'')+'">'+a.toFixed(1)+'%</span></div>'});h+='</div>'}
+      if(SEARCH_FRF) shownPos = shownPos.filter(p => (p.token||"").toLowerCase().includes(SEARCH_FRF.toLowerCase()));
+      
+      if(!shownPos.length)h+='<div class="emp">'+(window.FRFV==="open"?'Keine offenen Positionen gefunden.':'Keine vergangenen Positionen gefunden.')+'</div>';
+      else{
+        var isO = window.FRFV==="open";
+        var pgFRF = shownPos.slice(((isO?PG_FRFO:PG_FRFC)-1)*ITEMS_PER_PAGE, (isO?PG_FRFO:PG_FRFC)*ITEMS_PER_PAGE);
+        h+='<div class="lt"><div class="lt-hdr" style="grid-template-columns:1.2fr 1.2fr 1fr .88fr 90px;column-gap:18px"><span>Token</span><span style="text-align:right">Pos.-Groesse</span><span style="text-align:right">Tokenmenge</span><span style="text-align:right;padding-right:14px">PNL aktuell</span><span style="text-align:center">APR</span></div>';
+        pgFRF.forEach(function(p){var pnl=posPnl(p),d=db(p.startDate,p.endedAt||nw),cap=posCapital(p),a=calcApr(pnl-(p.fees||0),cap,d),liveSize=posLiveSize(p);h+='<div class="lt-row'+(posIncl(p)?'':' pia')+'" style="grid-template-columns:1.2fr 1.2fr 1fr .88fr 90px;column-gap:18px" onclick="FPI=\''+p.id+'\';V=\'frf_pos\';R()"><span class="lt-name">'+es(p.token)+(p.endedAt?'<span class="tkb">zu</span>':'')+'</span><span class="lt-val">'+fn(liveSize)+'</span><span class="lt-val">'+fn(p.tokenAmount)+'</span><span class="lt-val '+(pnl>=0?'g':'r')+'" style="padding-right:14px">'+(pnl>=0?'+':'')+fn(pnl)+'</span><span class="lt-apr'+(a<0?' mt':'')+'">'+a.toFixed(1)+'%</span></div>'});
+        h+='</div>';
+        h += pgNav(shownPos.length, isO?PG_FRFO:PG_FRFC, isO?'setPgFrfO':'setPgFrfC');
+      }
     }
     else if(V === 'frf_pos' && FPI) {
       var fp=FR.positions.find(x => x.id===FPI);
@@ -480,6 +587,8 @@ function R() {
   if(M.no&&se){h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Notizen</div><div class="fg"><textarea id="f-ne" rows="5">'+es(se.notes||"")+'</textarea></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hNo()">Speichern</button></div></div></div>';}
   if(M.tk&&se){var tk=se.token||{};h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Token</div><div class="fg"><label>Token</label><input id="f-etn" value="'+es(tk.name||"")+'"></div><div class="fr"><div class="fg"><label>Menge</label><input id="f-eta" type="number" step="any" value="'+(tk.amount||"")+'"></div><div class="fg"><label>Entry ($)</label><input id="f-etp" type="number" step="any" value="'+(tk.entryPrice||"")+'"></div></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hTk()">Speichern</button></div></div></div>';}
   if(M.ed&&se&&se.endedAt){h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Enddatum</div><div class="fr"><div class="fg"><label>Datum</label><input id="f-edd" type="date" value="'+fds(se.endedAt)+'"></div><div class="fg"><label>Uhrzeit</label><input id="f-edt" type="time" value="'+fts(se.endedAt)+'"></div></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hEd()">Speichern</button></div></div></div>';}
+  
+  if(M.adet){var ad=M.adet.acc;h+='<div class="ov" onclick="M.adet=null;R()"><div class="mdl" style="max-width:550px" onclick="event.stopPropagation()"><div class="mdt">Account Details</div><div style="font-size:16px;font-weight:600;margin-bottom:8px">'+es(ad.email)+'</div><div style="display:flex;gap:16px;margin-bottom:20px"><div style="flex:1;background:var(--bg2);padding:12px;border-radius:8px;border:1px solid var(--bd2)"><div style="font-size:11px;color:var(--t4)">Status</div><div style="font-size:14px">'+(ad.isverified?'<span style="color:var(--g)">Aktiv</span>':'<span style="color:var(--y)">Wartend</span>')+'</div></div><div style="flex:1;background:var(--bg2);padding:12px;border-radius:8px;border:1px solid var(--bd2)"><div style="font-size:11px;color:var(--t4)">Erstellt</div><div style="font-size:14px">'+fd(ad.createdat)+'</div></div><div style="flex:1;background:var(--bg2);padding:12px;border-radius:8px;border:1px solid var(--bd2)"><div style="font-size:11px;color:var(--t4)">Gesperrt</div><div style="font-size:14px">'+(ad.isblocked?'<span style="color:var(--r)">Ja</span>':'Nein')+'</div></div></div><div class="sh" style="margin-bottom:12px"><h3 class="st">Nutzung / Logins</h3><select style="width:auto;padding:4px 8px;font-size:12px" onchange="M.adet.tf=parseInt(this.value);renderAdminChart()"><option value="7" '+(M.adet.tf===7?"selected":"")+'>7 Tage</option><option value="14" '+(M.adet.tf===14?"selected":"")+'>14 Tage</option><option value="30" '+(M.adet.tf===30?"selected":"")+'>30 Tage</option><option value="90" '+(M.adet.tf===90?"selected":"")+'>90 Tage</option><option value="365" '+(M.adet.tf===365?"selected":"")+'>1 Jahr</option></select></div><div style="width:100%;height:140px;background:var(--bg2);border-radius:8px;margin-bottom:24px;position:relative"><canvas id="admin-chart" style="width:100%;height:100%"></canvas></div><div style="display:flex;gap:12px;padding-top:16px;border-top:1px solid var(--bd2)">';if(ad.role!=='admin'){h+='<button class="bt by" style="flex:1;justify-content:center" onclick="adminTgl(\''+ad.id+'\')">'+(ad.isblocked?'Entsperren':'Account Sperren')+'</button><button class="bt be" style="flex:1;justify-content:center" onclick="adminDel(\''+ad.id+'\')">Löschen</button>';}else{h+='<span style="color:var(--t4);font-size:12px;width:100%;text-align:center">Admins können sich nicht selbst löschen/sperren.</span>';}h+='<button class="bt bk" style="flex:1;justify-content:center" onclick="M.adet=null;R()">Schliessen</button></div></div></div>';}
   if(M.er){var er2=M.er;h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Reward bearbeiten</div><div class="fg"><label>Betrag</label><input id="f-era" type="number" step="0.000001" value="'+er2.amt+'"></div><div class="fg"><label>Notiz</label><input id="f-ern" value="'+es(er2.nt)+'"></div><div class="fr"><div class="fg"><label>Datum</label><input id="f-erd" type="date" value="'+fds(er2.dt)+'"></div><div class="fg"><label>Uhrzeit</label><input id="f-ert" type="time" value="'+fts(er2.dt)+'"></div></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hEr()">Speichern</button></div></div></div>';}
   if(M.ep){var ep2=M.ep;h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">PNL bearbeiten</div><div class="fg"><label>Betrag</label><input id="f-epa" type="number" step="0.01" value="'+ep2.amt+'"></div><div class="fg"><label>Notiz</label><input id="f-epn" value="'+es(ep2.nt)+'"></div><div class="fr"><div class="fg"><label>Datum</label><input id="f-epd" type="date" value="'+fds(ep2.dt)+'"></div><div class="fg"><label>Uhrzeit</label><input id="f-ept" type="time" value="'+fts(ep2.dt)+'"></div></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hEp()">Speichern</button></div></div></div>';}
   if(M.ei){var ei2=M.ei;h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Investment bearbeiten</div><div class="fg"><label>Betrag</label><input id="f-eia" type="number" step="0.01" value="'+ei2.amt+'"></div><div class="fg"><label>Notiz</label><input id="f-ein" value="'+es(ei2.nt)+'"></div><div class="fr"><div class="fg"><label>Datum</label><input id="f-eid" type="date" value="'+fds(ei2.dt)+'"></div><div class="fg"><label>Uhrzeit</label><input id="f-eit" type="time" value="'+fts(ei2.dt)+'"></div></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hEi()">Speichern</button></div></div></div>';}

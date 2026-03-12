@@ -39,8 +39,13 @@ async function sendMail(to, subject, html) {
   try {
     let transporter = nodemailer.createTransport(SMTP_CONFIG);
     await transporter.sendMail({ from: `"DeFi Vault" <${SMTP_CONFIG.auth.user}>`, to, subject, html });
+    console.log(`✅ Mail erfolgreich an ${to} gesendet.`);
     return true;
-  } catch (e) { console.error("Mail-Fehler:", e); return false; }
+  } catch (e) { 
+    console.error("❌ Mail-Fehler beim Senden an", to, ":", e.message); 
+    console.error("Stack:", e);
+    return false; 
+  }
 }
 
 // Globale Auth-Prüfung
@@ -156,6 +161,13 @@ app.post('/api/auth/login', async (req, res) => {
   if (acc.isblocked) return res.status(403).json({ error: 'Account ist blockiert' });
   if (!acc.isverified) return res.status(403).json({ error: 'E-Mail noch nicht verifiziert' });
   
+  // Track login
+  const today = new Date().toISOString().split('T')[0];
+  await db.query(
+    'INSERT INTO account_logins (id, accountId, loginDate) VALUES ($1, $2, $3) ON CONFLICT (accountId, loginDate) DO NOTHING',
+    [gid(), acc.id, today]
+  ).catch(e => console.error("Fehler beim Login Tracking:", e));
+
   const token = jwt.sign({ accountId: acc.id }, JWT_SECRET, { expiresIn: '30d' });
   res.cookie('dv_session', token, { maxAge: 30*24*60*60*1000, httpOnly: true, path: '/' });
   res.json({ ok: 1 });
@@ -191,11 +203,22 @@ app.delete('/api/profiles/:id', requireAuth, async (req, res) => {
 // ============================================
 app.get('/api/admin/accounts', requireAdmin, async (req, res) => {
   const { rows } = await db.query(`
-    SELECT a.id, a.email, a.role, a.isverified, a.isblocked, a.createdat, COUNT(p.id) as "profileCount"
-    FROM accounts a LEFT JOIN profiles p ON a.id = p.accountid
+    SELECT a.id, a.email, a.role, a.isverified, a.isblocked, a.createdat, COUNT(DISTINCT p.id) as "profileCount", COUNT(DISTINCT l.id) as "loginCount30d"
+    FROM accounts a 
+    LEFT JOIN profiles p ON a.id = p.accountid
+    LEFT JOIN account_logins l ON a.id = l.accountid AND l.logindate >= CURRENT_DATE - INTERVAL '30 days'
     GROUP BY a.id ORDER BY a.createdat DESC
   `);
   res.json(rows);
+});
+app.get('/api/admin/accounts/:id/stats', requireAdmin, async (req, res) => {
+  // Liefert die Logins der letzten 365 Tage für Charts
+  const { rows } = await db.query(`
+    SELECT logindate as date FROM account_logins 
+    WHERE accountId = $1 AND logindate >= CURRENT_DATE - INTERVAL '365 days'
+    ORDER BY logindate ASC
+  `, [req.params.id]);
+  res.json(rows.map(r => r.date));
 });
 app.put('/api/admin/accounts/:id/toggle-block', requireAdmin, async (req, res) => {
   const { rows } = await db.query('SELECT * FROM accounts WHERE id = $1', [req.params.id]);
