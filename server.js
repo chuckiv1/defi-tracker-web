@@ -214,22 +214,26 @@ app.get('/api/loops', requireAuth, attachProfile, async (req, res) => {
 
 app.post('/api/loops', requireAuth, attachProfile, async (req, res) => {
   try {
-    const { name, startDate, collateralToken, borrowToken, initialCollateral, supplyApy, borrowApr, leverage } = req.body;
-    if (!name || !startDate || !collateralToken || !borrowToken || !initialCollateral || !supplyApy || !borrowApr) {
+    const { name, startDate, collateralToken, borrowToken, startCollateral, collateralPrice, 
+            startCollateralAmount, supplyApy, borrowedAmount, borrowApy, endCollateralAmount, 
+            endBorrowedAmount, leverage } = req.body;
+    
+    if (!name || !startDate || !collateralToken || !borrowToken || !startCollateral || !collateralPrice || 
+        !startCollateralAmount || !supplyApy || !borrowedAmount || !borrowApy) {
       return res.status(400).json({ error: 'Pflichtfelder fehlen' });
     }
     
     const loopId = gid();
     const numericLeverage = parseFloat(leverage) || 1;
-    const supplyAmount = parseFloat(initialCollateral) * numericLeverage;
-    const borrowAmount = supplyAmount - parseFloat(initialCollateral);
     
     await db.query(`
       INSERT INTO loops (id, profileId, name, startDate, collateralToken, borrowToken, 
-        initialCollateral, supplyApy, borrowApr, leverage, supplyAmount, borrowAmount, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'active')
+        startCollateral, collateralPrice, startCollateralAmount, supplyApy, borrowedAmount, borrowApy, 
+        endCollateralAmount, endBorrowedAmount, leverage, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'active')
     `, [loopId, req.profile.id, name, startDate, collateralToken, borrowToken, 
-        initialCollateral, supplyApy, borrowApr, numericLeverage, supplyAmount, borrowAmount]);
+        startCollateral, collateralPrice, startCollateralAmount, supplyApy, borrowedAmount, borrowApy,
+        endCollateralAmount || startCollateralAmount, endBorrowedAmount || borrowedAmount, numericLeverage]);
     
     res.json({ id: loopId, ok: 1 });
   } catch(e) { console.error(e); res.status(500).json({error: 'Fehler beim Erstellen'}); }
@@ -237,13 +241,13 @@ app.post('/api/loops', requireAuth, attachProfile, async (req, res) => {
 
 app.put('/api/loops/:id', requireAuth, attachProfile, async (req, res) => {
   try {
-    const { name, supplyApy, borrowApr, leverage, supplyAmount, borrowAmount, status, notes } = req.body;
+    const { name, supplyApy, borrowApy, leverage, endCollateralAmount, endBorrowedAmount, status, notes } = req.body;
     const { rowCount } = await db.query(`
       UPDATE loops 
-      SET name = $1, supplyApy = $2, borrowApr = $3, leverage = $4, 
-          supplyAmount = $5, borrowAmount = $6, status = $7, notes = $8, updatedAt = CURRENT_TIMESTAMP
+      SET name = $1, supplyApy = $2, borrowApy = $3, leverage = $4, 
+          endCollateralAmount = $5, endBorrowedAmount = $6, status = $7, notes = $8, updatedAt = CURRENT_TIMESTAMP
       WHERE id = $9 AND profileId = $10
-    `, [name, supplyApy, borrowApr, leverage, supplyAmount, borrowAmount, status, notes, req.params.id, req.profile.id]);
+    `, [name, supplyApy, borrowApy, leverage, endCollateralAmount, endBorrowedAmount, status, notes, req.params.id, req.profile.id]);
     
     if (rowCount === 0) return res.status(404).json({ error: 'Loop nicht gefunden' });
     res.json({ ok: 1 });
@@ -259,12 +263,12 @@ app.delete('/api/loops/:id', requireAuth, attachProfile, async (req, res) => {
 
 app.post('/api/loops/:id/close', requireAuth, attachProfile, async (req, res) => {
   try {
-    const { endDate, finalSupplyAmount, finalBorrowAmount, pnl } = req.body;
+    const { endDate, endCollateralAmount, endBorrowedAmount, pnl } = req.body;
     await db.query(`
       UPDATE loops 
-      SET status = 'closed', endDate = $1, supplyAmount = $2, borrowAmount = $3, pnl = $4, updatedAt = CURRENT_TIMESTAMP
+      SET status = 'closed', endDate = $1, endCollateralAmount = $2, endBorrowedAmount = $3, pnl = $4, updatedAt = CURRENT_TIMESTAMP
       WHERE id = $5 AND profileId = $6
-    `, [endDate, finalSupplyAmount, finalBorrowAmount, pnl, req.params.id, req.profile.id]);
+    `, [endDate, endCollateralAmount, endBorrowedAmount, pnl, req.params.id, req.profile.id]);
     res.json({ ok: 1 });
   } catch(e) { console.error(e); res.status(500).json({error: 'Fehler beim Schließen'}); }
 });
