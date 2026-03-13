@@ -249,12 +249,15 @@ app.post('/api/loops', requireAuth, attachProfile, async (req, res) => {
             endBorrowedAmount, leverage } = req.body;
     
     if (!name || !startDate || !collateralToken || !borrowToken || !startCollateral || !collateralPrice || 
-        !startCollateralAmount || !supplyApy || !borrowedAmount || !borrowApy) {
+        !startCollateralAmount || !supplyApy || !borrowApy) {
       return res.status(400).json({ error: 'Pflichtfelder fehlen' });
     }
     
     const loopId = gid();
     const numericLeverage = parseFloat(leverage) || 1;
+    const numericBorrowedAmount = parseFloat(borrowedAmount);
+    const numericEndBorrowedAmount = parseFloat(endBorrowedAmount);
+    const borrowAmountValue = Number.isFinite(numericBorrowedAmount) ? numericBorrowedAmount : (Number.isFinite(numericEndBorrowedAmount) ? numericEndBorrowedAmount : 0);
     
     await db.query(`
       INSERT INTO loops (id, profileId, name, startDate, collateralToken, borrowToken, 
@@ -262,8 +265,8 @@ app.post('/api/loops', requireAuth, attachProfile, async (req, res) => {
         endCollateralAmount, endBorrowedAmount, leverage, status)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'active')
     `, [loopId, req.profile.id, name, startDate, collateralToken, borrowToken, 
-        startCollateral, collateralPrice, startCollateralAmount, supplyApy, borrowedAmount, borrowApy,
-        endCollateralAmount || startCollateralAmount, endBorrowedAmount || borrowedAmount, numericLeverage]);
+        startCollateral, collateralPrice, startCollateralAmount, supplyApy, borrowAmountValue, borrowApy,
+        endCollateralAmount || startCollateralAmount, Number.isFinite(numericEndBorrowedAmount) ? numericEndBorrowedAmount : borrowAmountValue, numericLeverage]);
     
     res.json({ id: loopId, ok: 1 });
   } catch(e) { console.error(e); res.status(500).json({error: 'Fehler beim Erstellen'}); }
