@@ -265,11 +265,11 @@ app.post('/api/loops', requireAuth, attachProfile, async (req, res) => {
         initialCollateral, supplyApy, borrowApr, supplyAmount, borrowAmount,
         startCollateral, collateralPrice, startCollateralAmount, borrowedAmount, borrowApy, 
         endCollateralAmount, endBorrowedAmount, leverage, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, 'active')
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
     `, [loopId, req.profile.id, name, startDate, collateralToken, borrowToken, 
         startCollateral, supplyApy, borrowApy, supplyAmountValue, borrowAmountValue,
         startCollateral, collateralPrice, startCollateralAmount, borrowAmountValue, borrowApy,
-        endCollateralAmount || startCollateralAmount, Number.isFinite(numericEndBorrowedAmount) ? numericEndBorrowedAmount : borrowAmountValue, numericLeverage]);
+        endCollateralAmount || startCollateralAmount, Number.isFinite(numericEndBorrowedAmount) ? numericEndBorrowedAmount : borrowAmountValue, numericLeverage, 'active']);
     
     res.json({ id: loopId, ok: 1 });
   } catch(e) { console.error(e); res.status(500).json({error: 'Fehler beim Erstellen'}); }
