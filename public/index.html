@@ -189,23 +189,26 @@ function F(u, o={}) {
 function loadData() {
   api('/api/auth/status').then(res => {
     AUTH.loggedIn = res.data.loggedIn;
-    if(!AUTH.loggedIn) { 
-      IS_DEMO = true;
-      AUTH.account = { email: 'demo@defitracker.com' };
-      AUTH.profiles = [{id: 'demo_profile', name: 'Demo Portfolio'}];
-      PID = 'demo_profile';
-      
+    if(!AUTH.loggedIn) {
+      // TEST MODE: Auto-login as admin (NEVER deploy this to production!)
+      IS_DEMO = false;
+      AUTH.loggedIn = true;
+      AUTH.account = res.data.account || { email: 'test@local.dev', role: 'admin' };
+      AUTH.profiles = res.data.profiles || [{id: 'test_profile', name: 'Test Portfolio'}];
+      PID = 'test_profile';
+      if(PID) localStorage.setItem('dv_pid', PID);
+
       restoreUi(); normUi();
-      api('/api/demo-data').then(d => {
-        S = d.data.data || [];
-        FR = d.data.frf || {exchanges:[], positions:[]};
-        U = [];
-        R();
+
+      // Load data from API
+      Promise.all([api('/api/strategies'), api('/api/frf'), api('/api/undo'), api('/api/loops')]).then(d => {
+        S = d[0].data || []; FR = d[1].data || {exchanges:[], positions:[]}; U = d[2].data || []; LO = d[3].data || [];
+        if(V === 'admin') loadAdmin(); else R();
         fetchPrices();
       }).catch(err => {
-         document.getElementById("app").innerHTML = '<div class="emp" style="color:var(--r)">Fehler beim Laden der Demo-Daten: '+err.message+'</div>';
+         document.getElementById("app").innerHTML = '<div class="emp" style="color:var(--r)">Fehler beim Laden: '+err.message+'</div>';
       });
-      return; 
+      return;
     }
     
     IS_DEMO = false;
@@ -307,8 +310,9 @@ function hSupport() {
   });
 }
 
-function hLoopCr(){var n=prompt("Name für den Loop:"),d=document.getElementById("f-ld").value,i=parseFloat(document.getElementById("f-li").value),ct=document.getElementById("f-lct").value,bt=document.getElementById("f-lbt").value,sa=parseFloat(document.getElementById("f-lsa").value),ba=parseFloat(document.getElementById("f-lba").value),l=parseFloat(document.getElementById("f-ll").value)||2;if(!n||!d||!i||!sa||!ba)return;cm();api('/api/loops',{method:'POST',body:JSON.stringify({name:n,startDate:d,initialCollateral:i,collateralToken:ct,borrowToken:bt,supplyApy:sa,borrowApr:ba,leverage:l})}).then(()=>{loadLoops();});}
+function hLoopCr(){var n=document.getElementById("f-ln").value.trim(),d=document.getElementById("f-ld").value,t=document.getElementById("f-lt").value||"00:00",ct=document.getElementById("f-lct").value.trim(),bt=document.getElementById("f-lbt").value.trim(),sm=parseFloat(document.getElementById("f-lsm").value),bm=parseFloat(document.getElementById("f-lbm").value),sa=parseFloat(document.getElementById("f-lsa").value),ba=parseFloat(document.getElementById("f-lba").value);if(!n||!ct||!bt||!sm||isNaN(bm)||!sa||!ba)return;cm();var startDate=d?new Date(d+"T"+t).toISOString():new Date().toISOString();var l=sm/(sm-bm);api('/api/loops',{method:'POST',body:JSON.stringify({name:n,startDate:startDate,collateralToken:ct,borrowToken:bt,supplyAmount:sm,borrowAmount:bm,supplyApy:sa,borrowApr:ba,leverage:l})}).then(()=>{loadLoops();});}
 function closeLoop(id){if(!confirm("Loop wirklich schließen?"))return;api('/api/loops/'+id+'/close',{method:'POST',body:JSON.stringify({endDate:new Date().toISOString()})}).then(()=>{loadLoops();});}
+function calcLoopLev(){var sm=parseFloat(document.getElementById("f-lsm")?.value)||0;var bm=parseFloat(document.getElementById("f-lbm")?.value)||0;var levEl=document.getElementById("f-ll");if(sm>0&&bm>0&&bm<sm){var lev=sm/(sm-bm);levEl.value=lev.toFixed(2);}else{levEl.value="";}}
 function hFeature() {
   let t = document.getElementById('f-title').value, m = document.getElementById('f-desc').value;
   if(!t || !m) return alert("Bitte Titel und Beschreibung ausfüllen.");
@@ -674,7 +678,10 @@ function R() {
       else{
         activeL.forEach(function(l){
           var net=(parseFloat(l.supplyapy||0)-parseFloat(l.borrowapr||0))*parseFloat(l.leverage||1);
-          h+='<div class="cd" style="margin-bottom:12px"><div class="cdh"><div><div class="cdn">'+es(l.name)+'</div><div style="font-size:12px;color:var(--t3);margin-top:2px">'+es(l.collateraltoken)+' → '+es(l.borrowtoken)+' · '+fd(l.startdate)+'</div></div><span class="bdg ac">'+parseFloat(l.leverage||1).toFixed(1)+'x</span></div><div class="cdb"><div class="cgr"><div class="cgi"><span class="cgl">Initial Collateral</span><span class="cgv">'+fn(parseFloat(l.initialcollateral||0))+' '+es(l.collateraltoken)+'</span></div><div class="cgi"><span class="cgl">Supply</span><span class="cgv g">'+fn(parseFloat(l.supplyamount||0))+' '+es(l.collateraltoken)+'</span></div><div class="cgi"><span class="cgl">Borrow</span><span class="cgv r">-'+fn(parseFloat(l.borrowamount||0))+' '+es(l.borrowtoken)+'</span></div><div class="cgi"><span class="cgl">Supply APY</span><span class="cgv g">+'+parseFloat(l.supplyapy||0).toFixed(1)+'%</span></div><div class="cgi"><span class="cgl">Borrow APR</span><span class="cgv r">-'+parseFloat(l.borrowapr||0).toFixed(1)+'%</span></div><div class="cgi"><span class="cgl">Netto APR</span><span class="cgv '+((net>0)?'g':'')+'">'+((net>0)?'+':'')+net.toFixed(1)+'%</span></div></div><div class="cdf"><button class="bt be" onclick="event.stopPropagation();closeLoop(\''+l.id+'\')">Schließen</button></div></div></div>';
+          var supplyAmt=parseFloat(l.supplyamount||0);
+          var borrowAmt=parseFloat(l.borrowamount||0);
+          var lev=parseFloat(l.leverage||1);
+          h+='<div class="cd" style="margin-bottom:12px"><div class="cdh"><div><div class="cdn">'+es(l.name)+'</div><div style="font-size:12px;color:var(--t3);margin-top:2px">'+es(l.collateraltoken)+' → '+es(l.borrowtoken)+' · '+fd(l.startdate)+'</div></div><span class="bdg ac">'+lev.toFixed(1)+'x</span></div><div class="cdb"><div class="cgr"><div class="cgi"><span class="cgl">Supply</span><span class="cgv g">'+fn(supplyAmt)+' '+es(l.collateraltoken)+'</span></div><div class="cgi"><span class="cgl">Borrow</span><span class="cgv r">-'+fn(borrowAmt)+' '+es(l.borrowtoken)+'</span></div><div class="cgi"><span class="cgl">Supply APY</span><span class="cgv g">+'+parseFloat(l.supplyapy||0).toFixed(1)+'%</span></div><div class="cgi"><span class="cgl">Borrow APY</span><span class="cgv r">-'+parseFloat(l.borrowapr||0).toFixed(1)+'%</span></div><div class="cgi"><span class="cgl">Netto APR</span><span class="cgv '+((net>0)?'g':'')+'">'+((net>0)?'+':'')+net.toFixed(1)+'%</span></div></div><div class="cdf"><button class="bt be" onclick="event.stopPropagation();closeLoop(\''+l.id+'\')">Schließen</button></div></div></div>';
         });
       }
     }
@@ -742,7 +749,7 @@ else if(V === 'community') {
   if(M.fclose){h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Position schließen</div><div class="fg"><label>PNL Short-Seite (USDC)</label><input id="f-fcs" type="number" step="0.01"></div><div class="fg"><label>PNL Long-Seite (USDC / Spot)</label><input id="f-fcl" type="number" step="0.01"></div><div class="fg"><label>Fees (optional)</label><input id="f-fcf" type="number" step="0.01" value="0"></div><div class="fg"><label>Notiz</label><input id="f-fcn"></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt be" style="flex:1;justify-content:center" onclick="hFclose()">Schließen</button></div></div></div>';}
   if(M.fprc){var ump=M.fprc.ump;h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Tokenpreis manuell setzen</div><div class="fg"><label class="sw"><input type="checkbox" id="f-ump" '+(ump?"checked":"")+' onchange="M.fprc.ump=this.checked?1:0;R()"><span class="sl2"></span></label> <span style="font-size:13px;margin-left:8px;vertical-align:super">Manuellen Preis verwenden</span></div>';if(ump){h+='<div class="fg" style="margin-top:10px"><label>Preis ($)</label><input id="f-mp" type="number" step="any" value="'+M.fprc.mp+'"></div>'}h+='<div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hFprc()">Speichern</button></div></div></div>'}
   
-  if(M.lcr){h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Neuen Loop erstellen</div><div class="fr"><div class="fg"><label>Start Datum</label><input id="f-ld" type="date"></div><div class="fg"><label>Initial Collateral</label><input id="f-li" type="number" step="0.01"></div></div><div class="fr"><div class="fg"><label>Collat Token</label><select id="f-lct"><option>USDC</option><option>USDT</option><option>ETH</option><option>WBTC</option></select></div><div class="fg"><label>Borrow Token</label><select id="f-lbt"><option>ETH</option><option>WBTC</option><option>USDC</option><option>USDT</option></select></div></div><div class="fr"><div class="fg"><label>Supply APY (%)</label><input id="f-lsa" type="number" step="0.01"></div><div class="fg"><label>Borrow APR (%)</label><input id="f-lba" type="number" step="0.01"></div></div><div class="fg"><label>Hebel (z.B. 2.5)</label><input id="f-ll" type="number" step="0.1" value="2.0"><div class="hnt">Aktuell aufgelaufener Funding-Betrag (kumuliert)</div></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hLoopCr()">Erstellen</button></div></div></div>';}
+  if(M.lcr){h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Neuen Loop erstellen</div><div class="fg"><label>Loop Name</label><input id="f-ln" placeholder="z.B. USDC-ETH Loop"></div><div class="fr"><div class="fg"><label>Start Datum (leer = jetzt)</label><input id="f-ld" type="date"></div><div class="fg"><label>Start Uhrzeit</label><input id="f-lt" type="time"></div></div><div class="fr"><div class="fg"><label>Collat Token</label><input id="f-lct" placeholder="z.B. USDC"></div><div class="fg"><label>Borrow Token</label><input id="f-lbt" placeholder="z.B. ETH"></div></div><div class="fr"><div class="fg"><label>Supply Token Menge</label><input id="f-lsm" type="number" step="any" placeholder="z.B. 10" oninput="calcLoopLev()"></div><div class="fg"><label>Borrow Token Menge</label><input id="f-lbm" type="number" step="any" placeholder="z.B. 25" oninput="calcLoopLev()"></div></div><div class="fr"><div class="fg"><label>Supply APY (%)</label><input id="f-lsa" type="number" step="0.01" placeholder="z.B. 8.5"></div><div class="fg"><label>Borrow APY (%)</label><input id="f-lba" type="number" step="0.01" placeholder="z.B. 3.2"></div></div><div class="fg"><label>Hebel (automatisch berechnet)</label><input id="f-ll" type="number" step="0.01" readonly style="background:var(--bg3);color:var(--t3)"><div class="hnt">Hebel = Supply Menge / (Supply Menge - Borrow Menge)</div></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hLoopCr()">Erstellen</button></div></div></div>';}
 if(M.fnew){h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Neuer Feature-Vorschlag</div><p style="font-size:12px;color:var(--t4);margin-bottom:16px">Beschreibe deine Idee so genau wie möglich. Ein Admin wird den Vorschlag prüfen und zur Abstimmung freigeben.</p><div class="fg"><label>Titel (Kurz & Bündig)</label><input id="f-title" placeholder="z.B. Dark Mode Option"></div><div class="fg"><label>Details / Beschreibung</label><textarea id="f-desc" style="width:100%;height:100px;padding:8px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg);color:var(--t);font-family:inherit;font-size:13px;resize:vertical" placeholder="Ich hätte gerne..."></textarea></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hFeature()">Einreichen</button></div></div></div>';}
 
   var activeId=document.activeElement?document.activeElement.id:null, selStart=null, selEnd=null;
@@ -753,7 +760,7 @@ if(M.fnew){h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="even
 
   if(activeId){var restored=document.getElementById(activeId);if(restored){restored.focus();if(selStart!==null){try{restored.setSelectionRange(selStart,selEnd);}catch(e){}}}}
 
-  var foc={p:"p-name",eu:"f-eun",cr:"f-n",rw:"f-ra",iv:"f-ni",pl:"f-pa",no:"f-ne",tk:"f-etn",ed:"f-edd",er:"f-era",ep:"f-epa",ei:"f-eia",fex:"f-exn",fexm:"f-exma",fpos:"f-ptk",ffund:"f-ffa",fefund:"f-fefa",fclose:"f-fcs",femm:"f-fmma",feex:"f-eexn",fepos:"f-eptk",fprc:"f-mp",login:"l-email",reg:"r-email"};
+  var foc={p:"p-name",eu:"f-eun",cr:"f-n",rw:"f-ra",iv:"f-ni",pl:"f-pa",no:"f-ne",tk:"f-etn",ed:"f-edd",er:"f-era",ep:"f-epa",ei:"f-eia",fex:"f-exn",fexm:"f-exma",fpos:"f-ptk",ffund:"f-ffa",fefund:"f-fefa",fclose:"f-fcs",femm:"f-fmma",feex:"f-eexn",fepos:"f-eptk",fprc:"f-mp",login:"l-email",reg:"r-email",lcr:"f-ln"};
   for(var k in foc)if(M[k]){setTimeout(function(id){return function(){var el=document.getElementById(id);if(el)el.focus()}}(foc[k]),50);break}
 }
 
