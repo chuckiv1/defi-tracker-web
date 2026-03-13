@@ -189,26 +189,23 @@ function F(u, o={}) {
 function loadData() {
   api('/api/auth/status').then(res => {
     AUTH.loggedIn = res.data.loggedIn;
-    if(!AUTH.loggedIn) {
-      // TEST MODE: Auto-login as admin (NEVER deploy this to production!)
-      IS_DEMO = false;
-      AUTH.loggedIn = true;
-      AUTH.account = res.data.account || { email: 'test@local.dev', role: 'admin' };
-      AUTH.profiles = res.data.profiles || [{id: 'test_profile', name: 'Test Portfolio'}];
-      PID = 'test_profile';
-      if(PID) localStorage.setItem('dv_pid', PID);
-
+    if(!AUTH.loggedIn) { 
+      IS_DEMO = true;
+      AUTH.account = { email: 'demo@defitracker.com' };
+      AUTH.profiles = [{id: 'demo_profile', name: 'Demo Portfolio'}];
+      PID = 'demo_profile';
+      
       restoreUi(); normUi();
-
-      // Load data from API
-      Promise.all([api('/api/strategies'), api('/api/frf'), api('/api/undo'), api('/api/loops')]).then(d => {
-        S = d[0].data || []; FR = d[1].data || {exchanges:[], positions:[]}; U = d[2].data || []; LO = d[3].data || [];
-        if(V === 'admin') loadAdmin(); else R();
+      api('/api/demo-data').then(d => {
+        S = d.data.data || [];
+        FR = d.data.frf || {exchanges:[], positions:[]};
+        U = [];
+        R();
         fetchPrices();
       }).catch(err => {
-         document.getElementById("app").innerHTML = '<div class="emp" style="color:var(--r)">Fehler beim Laden: '+err.message+'</div>';
+         document.getElementById("app").innerHTML = '<div class="emp" style="color:var(--r)">Fehler beim Laden der Demo-Daten: '+err.message+'</div>';
       });
-      return;
+      return; 
     }
     
     IS_DEMO = false;
