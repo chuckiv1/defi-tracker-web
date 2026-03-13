@@ -199,6 +199,77 @@ app.delete('/api/profiles/:id', requireAuth, async (req, res) => {
 });
 
 // ============================================
+// LOOPING API
+// ============================================
+app.get('/api/loops', requireAuth, attachProfile, async (req, res) => {
+  try {
+    const { rows } = await db.query(`
+      SELECT * FROM loops 
+      WHERE profileId = $1 
+      ORDER BY startDate DESC
+    `, [req.profile.id]);
+    res.json(rows);
+  } catch(e) { console.error(e); res.status(500).json({error: 'Fehler beim Laden'}); }
+});
+
+app.post('/api/loops', requireAuth, attachProfile, async (req, res) => {
+  try {
+    const { name, startDate, collateralToken, borrowToken, initialCollateral, supplyApy, borrowApr, leverage } = req.body;
+    if (!name || !startDate || !collateralToken || !borrowToken || !initialCollateral || !supplyApy || !borrowApr) {
+      return res.status(400).json({ error: 'Pflichtfelder fehlen' });
+    }
+    
+    const loopId = gid();
+    const numericLeverage = parseFloat(leverage) || 1;
+    const supplyAmount = parseFloat(initialCollateral) * numericLeverage;
+    const borrowAmount = supplyAmount - parseFloat(initialCollateral);
+    
+    await db.query(`
+      INSERT INTO loops (id, profileId, name, startDate, collateralToken, borrowToken, 
+        initialCollateral, supplyApy, borrowApr, leverage, supplyAmount, borrowAmount, status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'active')
+    `, [loopId, req.profile.id, name, startDate, collateralToken, borrowToken, 
+        initialCollateral, supplyApy, borrowApr, numericLeverage, supplyAmount, borrowAmount]);
+    
+    res.json({ id: loopId, ok: 1 });
+  } catch(e) { console.error(e); res.status(500).json({error: 'Fehler beim Erstellen'}); }
+});
+
+app.put('/api/loops/:id', requireAuth, attachProfile, async (req, res) => {
+  try {
+    const { name, supplyApy, borrowApr, leverage, supplyAmount, borrowAmount, status, notes } = req.body;
+    const { rowCount } = await db.query(`
+      UPDATE loops 
+      SET name = $1, supplyApy = $2, borrowApr = $3, leverage = $4, 
+          supplyAmount = $5, borrowAmount = $6, status = $7, notes = $8, updatedAt = CURRENT_TIMESTAMP
+      WHERE id = $9 AND profileId = $10
+    `, [name, supplyApy, borrowApr, leverage, supplyAmount, borrowAmount, status, notes, req.params.id, req.profile.id]);
+    
+    if (rowCount === 0) return res.status(404).json({ error: 'Loop nicht gefunden' });
+    res.json({ ok: 1 });
+  } catch(e) { console.error(e); res.status(500).json({error: 'Fehler beim Aktualisieren'}); }
+});
+
+app.delete('/api/loops/:id', requireAuth, attachProfile, async (req, res) => {
+  try {
+    await db.query('DELETE FROM loops WHERE id = $1 AND profileId = $2', [req.params.id, req.profile.id]);
+    res.json({ ok: 1 });
+  } catch(e) { console.error(e); res.status(500).json({error: 'Fehler beim Löschen'}); }
+});
+
+app.post('/api/loops/:id/close', requireAuth, attachProfile, async (req, res) => {
+  try {
+    const { endDate, finalSupplyAmount, finalBorrowAmount, pnl } = req.body;
+    await db.query(`
+      UPDATE loops 
+      SET status = 'closed', endDate = $1, supplyAmount = $2, borrowAmount = $3, pnl = $4, updatedAt = CURRENT_TIMESTAMP
+      WHERE id = $5 AND profileId = $6
+    `, [endDate, finalSupplyAmount, finalBorrowAmount, pnl, req.params.id, req.profile.id]);
+    res.json({ ok: 1 });
+  } catch(e) { console.error(e); res.status(500).json({error: 'Fehler beim Schließen'}); }
+});
+
+// ============================================
 // ADMIN API
 // ============================================
 app.get('/api/admin/accounts', requireAdmin, async (req, res) => {

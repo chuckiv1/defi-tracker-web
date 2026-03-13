@@ -50,6 +50,37 @@ async function initDB() {
         createdat TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (request_id, account_id)
       );
+
+      CREATE TABLE IF NOT EXISTS loops (
+        id VARCHAR(50) PRIMARY KEY,
+        profileId VARCHAR(50) REFERENCES profiles(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        startDate TIMESTAMP NOT NULL,
+        endDate TIMESTAMP,
+        collateralToken VARCHAR(50) NOT NULL,
+        borrowToken VARCHAR(50) NOT NULL,
+        initialCollateral NUMERIC NOT NULL,
+        supplyApy NUMERIC NOT NULL,
+        borrowApr NUMERIC NOT NULL,
+        leverage NUMERIC NOT NULL DEFAULT 1,
+        supplyAmount NUMERIC DEFAULT 0,
+        borrowAmount NUMERIC DEFAULT 0,
+        status VARCHAR(20) DEFAULT 'active',
+        notes TEXT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS loop_updates (
+        id VARCHAR(50) PRIMARY KEY,
+        loopId VARCHAR(50) REFERENCES loops(id) ON DELETE CASCADE,
+        date TIMESTAMP NOT NULL,
+        supplyAmount NUMERIC,
+        borrowAmount NUMERIC,
+        leverage NUMERIC,
+        note TEXT,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
     `);
     console.log("✅ Database initialized successfully.");
   } catch (err) {
