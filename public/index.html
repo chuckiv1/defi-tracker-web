@@ -481,7 +481,11 @@ function R() {
     h+='<div class="undo-wrap"><button class="undo-btn'+(U.length?'':'" disabled')+'" onclick="UD=!UD;M.usr=false;R()">↩'+(U.length?' ('+U.length+')':'')+'</button>';
     if(UD&&U.length){h+='<div class="undo-dd">';U.slice().reverse().forEach(u=>{h+='<div class="undo-item" onclick="event.stopPropagation();doUndo('+u.index+')"><span class="undo-label">'+es(u.label)+'</span><span class="undo-time">'+fd(u.time)+'</span></div>'});h+='</div>'}h+='</div>';
     
-    h += '<nav class="nv"><button class="'+(V==="active"||(V==="detail"&&se&&!se.endedAt)?"a":"")+'" onclick="V=\'active\';SI=null;FPI=null;UD=false;M.usr=false;loadData()">Aktiv</button><button class="'+(V==="past"||(V==="detail"&&se&&se.endedAt)?"a":"")+'" onclick="V=\'past\';SI=null;FPI=null;UD=false;M.usr=false;loadData()">Vergangen</button><button class="'+(V==="frf"||V==="frf_pos"?"a":"")+'" onclick="FRFV=\'open\';V=\'frf\';SI=null;FPI=null;UD=false;M.usr=false;loadData()">FRF</button><button class="'+(V==="looping"?"a":"")+'" onclick="V=\'looping\';SI=null;FPI=null;UD=false;M.usr=false;loadLoops()">Looping</button>';
+        h += '<nav class="nv">';
+    h += '<button class="'+(V==="active"||(V==="detail"&&se&&!se.endedAt)?"a":"")+'" onclick="V=\'active\';SI=null;FPI=null;UD=false;M.usr=false;R()">Aktiv</button>';
+    h += '<button class="'+(V==="past"||(V==="detail"&&se&&se.endedAt)?"a":"")+'" onclick="V=\'past\';SI=null;FPI=null;UD=false;M.usr=false;R()">Vergangen</button>';
+    h += '<button class="'+(V==="frf"||V==="frf_pos"?"a":"")+'" onclick="FRFV=\'open\';V=\'frf\';SI=null;FPI=null;UD=false;M.usr=false;R()">FRF</button>';
+    h += '<button class="'+(V==="looping"?"a":"")+'" onclick="V=\'looping\';SI=null;FPI=null;UD=false;M.usr=false;loadLoops()">Looping</button>';
     if(AUTH.loggedIn && !IS_DEMO) h+= '<button class="'+(V==="community"?"a":"")+'" onclick="V=\'community\';SI=null;FPI=null;M.usr=false;loadFeatures();">Community</button>';
     if(AUTH.account.role === 'admin') h+= '<button class="'+(V==="admin"?"a":"")+'" onclick="V=\'admin\';SI=null;FPI=null;M.usr=false;loadAdmin();">Admin</button>';
     h += '</nav>';
