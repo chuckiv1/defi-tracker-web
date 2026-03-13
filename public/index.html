@@ -73,7 +73,7 @@ function uiKey(){return UI_KEY_BASE+"_"+(PID||"guest")}
 function saveUi(){try{localStorage.setItem(uiKey(),JSON.stringify({V:V,SI:SI,FRFV:FRFV,FPI:FPI,VW:VW,STRAT_SORT:STRAT_SORT,FRF_SORT:FRF_SORT,EXP:EXP}))}catch(e){}}
 function restoreUi(){try{var raw=localStorage.getItem(uiKey());if(!raw)return;var st=JSON.parse(raw)||{};if(st.V)V=st.V;if(st.SI!==undefined)SI=st.SI||null;if(st.FRFV)FRFV=st.FRFV;if(st.FPI!==undefined)FPI=st.FPI||null;if(st.VW)VW=st.VW;if(st.STRAT_SORT)STRAT_SORT=st.STRAT_SORT;if(st.FRF_SORT)FRF_SORT=st.FRF_SORT;if(st.EXP&&typeof st.EXP==="object")EXP=st.EXP}catch(e){}}
 function normUi(){
-  if(["active","past","detail","frf","frf_pos","admin"].indexOf(V)===-1)V="active";
+  if(["active","past","detail","frf","frf_pos","admin","community"].indexOf(V)===-1)V="active";
   if(VW!=="grid"&&VW!=="list")VW="grid";
   if(FRFV!=="open"&&FRFV!=="closed")FRFV="open";
   if(["size","az","za","apr","runtime"].indexOf(STRAT_SORT)===-1)STRAT_SORT="size";
