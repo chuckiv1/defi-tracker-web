@@ -216,15 +216,15 @@ function loadData() {
     restoreUi(); normUi();
 
     if(PID) {
-      Promise.all([api('/api/strategies'), api('/api/frf'), api('/api/undo')]).then(d => {
-        S = d[0].data || []; FR = d[1].data || {exchanges:[], positions:[]}; U = d[2].data || [];
+      Promise.all([api('/api/strategies'), api('/api/frf'), api('/api/undo'), api('/api/loops')]).then(d => {
+        S = d[0].data || []; FR = d[1].data || {exchanges:[], positions:[]}; U = d[2].data || []; LO = d[3].data || [];
         if(V === 'admin') loadAdmin(); else R(); 
         fetchPrices();
       }).catch(err => {
          document.getElementById("app").innerHTML = '<div class="emp" style="color:var(--r)">Fehler beim Laden der Profildaten: '+err.message+'</div>';
       });
     } else {
-      S=[]; FR={exchanges:[], positions:[]}; U=[];
+      S=[]; FR={exchanges:[], positions:[]}; U=[]; LO=[];
       if(V === 'admin') loadAdmin(); else R();
     }
   }).catch(e => { 
@@ -667,7 +667,7 @@ function R() {
       else{
         activeL.forEach(function(l){
           var net=(parseFloat(l.supplyapy||0)-parseFloat(l.borrowapr||0))*parseFloat(l.leverage||1);
-          h+='<div class="cd" style="margin-bottom:12px"><div class="cdh"><div><div class="cdn">'+es(l.name)+'</div><div style="font-size:12px;color:var(--t3);margin-top:2px">'+es(l.collateraltoken)+' → '+es(l.borrowtoken)+' · '+fd(l.startdate)+'</div></div><span class="bdg ac">'+parseFloat(l.leverage||1).toFixed(1)+'x</span></div><div class="cdc"><div class="cgr"><div class="cgi"><span class="cgl">Initial Collateral</span><span class="cgv">'+fn(parseFloat(l.initialcollateral||0))+' '+es(l.collateraltoken)+'</span></div><div class="cgi"><span class="cgl">Supply</span><span class="cgv">'+fn(parseFloat(l.supplyamount||0))+' '+es(l.collateraltoken)+'</span></div><div class="cgi"><span class="cgl">Borrow</span><span class="cgv r">-'+fn(parseFloat(l.borrowamount||0))+' '+es(l.borrowtoken)+'</span></div><div class="cgi"><span class="cgl">Supply APY</span><span class="cgv g">+'+parseFloat(l.supplyapy||0).toFixed(1)+'%</span></div><div class="cgi"><span class="cgl">Borrow APR</span><span class="cgv r">-'+parseFloat(l.borrowapr||0).toFixed(1)+'%</span></div><div class="cgi"><span class="cgl">Netto APR</span><span class="cgv '+((net>0)?'g':'')+'">'+((net>0)?'+':'')+net.toFixed(1)+'%</span></div></div><div class="cdf"><button class="bt be" onclick="event.stopPropagation();closeLoop(''+l.id+'')">Schließen</button></div></div></div>';
+          h+='<div class="cd" style="margin-bottom:12px"><div class="cdh"><div><div class="cdn">'+es(l.name)+'</div><div style="font-size:12px;color:var(--t3);margin-top:2px">'+es(l.collateraltoken)+' → '+es(l.borrowtoken)+' · '+fd(l.startdate)+'</div></div><span class="bdg ac">'+parseFloat(l.leverage||1).toFixed(1)+'x</span></div><div class="cdc"><div class="cgr"><div class="cgi"><span class="cgl">Initial Collateral</span><span class="cgv">'+fn(parseFloat(l.initialcollateral||0))+' '+es(l.collateraltoken)+'</span></div><div class="cgi"><span class="cgl">Supply</span><span class="cgv">'+fn(parseFloat(l.supplyamount||0))+' '+es(l.collateraltoken)+'</span></div><div class="cgi"><span class="cgl">Borrow</span><span class="cgv r">-'+fn(parseFloat(l.borrowamount||0))+' '+es(l.borrowtoken)+'</span></div><div class="cgi"><span class="cgl">Supply APY</span><span class="cgv g">+'+parseFloat(l.supplyapy||0).toFixed(1)+'%</span></div><div class="cgi"><span class="cgl">Borrow APR</span><span class="cgv r">-'+parseFloat(l.borrowapr||0).toFixed(1)+'%</span></div><div class="cgi"><span class="cgl">Netto APR</span><span class="cgv '+((net>0)?'g':'')+'">'+((net>0)?'+':'')+net.toFixed(1)+'%</span></div></div><div class="cdf"><button class="bt be" onclick="event.stopPropagation();closeLoop(\''+l.id+'\')">Schließen</button></div></div></div>';
         });
       }
     }
