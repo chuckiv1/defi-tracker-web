@@ -13,6 +13,8 @@ const app = express();
 const PORT = process.env.PORT || 3002;
 const APP_URL = process.env.APP_URL || 'https://defivault.cloud';
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_do_not_use_in_prod';
+const VERIFY_RESEND_LIMIT_MS = 10000;
+const verifyResendCooldowns = new Map();
 
 const SMTP_CONFIG = {
   host: process.env.SMTP_HOST || "",
@@ -149,6 +151,34 @@ app.post('/api/auth/verify', async (req, res) => {
   await db.query('INSERT INTO profiles (id, accountid, name) VALUES ($1, $2, $3)', [gid(), acc.id, 'Main Wallet']);
   
   res.json({ ok: 1 });
+});
+
+app.post('/api/auth/resend-verification', async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  if (!email || !email.includes('@')) return res.status(400).json({ error: 'Ungültige E-Mail' });
+
+  const now = Date.now();
+  const lastSentAt = verifyResendCooldowns.get(email) || 0;
+  const waitMs = VERIFY_RESEND_LIMIT_MS - (now - lastSentAt);
+  if (waitMs > 0) {
+    return res.status(429).json({ error: 'Bitte warte kurz vor dem nächsten Versand', retryAfterMs: waitMs });
+  }
+
+  const { rows } = await db.query('SELECT * FROM accounts WHERE LOWER(email) = LOWER($1)', [email]);
+  if (rows.length === 0) return res.status(404).json({ error: 'Kein Account mit dieser E-Mail gefunden' });
+
+  const acc = rows[0];
+  if (acc.isverified) return res.status(400).json({ error: 'E-Mail ist bereits verifiziert' });
+
+  const verifyToken = acc.verifytoken || gid();
+  if (!acc.verifytoken) {
+    await db.query('UPDATE accounts SET verifyToken = $1 WHERE id = $2', [verifyToken, acc.id]);
+  }
+
+  const link = `${APP_URL}/verify.html?token=${verifyToken}`;
+  await sendMail(acc.email, 'DeFi Vault - Bitte verifiziere deine E-Mail', `Klicke hier, um deinen Account freizuschalten: <a href="${link}">${link}</a>`);
+  verifyResendCooldowns.set(email, now);
+  res.json({ ok: 1, retryAfterMs: VERIFY_RESEND_LIMIT_MS });
 });
 
 app.post('/api/auth/login', async (req, res) => {
