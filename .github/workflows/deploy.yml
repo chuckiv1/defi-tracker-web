@@ -14,7 +14,8 @@ jobs:
           username: root
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
+            set -e
             cd /root/defi-tracker-web
-            git pull
+            git pull --ff-only
             docker compose pull
-            docker compose up -d
+            docker compose up -d --remove-orphans
