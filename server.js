@@ -11,7 +11,7 @@ const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
-const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
+const APP_URL = process.env.APP_URL || 'https://defivault.cloud';
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_do_not_use_in_prod';
 
 const SMTP_CONFIG = {
