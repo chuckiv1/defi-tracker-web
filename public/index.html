@@ -662,6 +662,7 @@ function R() {
     }
     
     else if(V === 'looping') {
+      h+='<div style="background:linear-gradient(90deg,var(--y),var(--o));color:#000;padding:12px 20px;border-radius:8px;margin-bottom:20px;font-weight:600;text-align:center;font-size:14px">🚧 Looping noch im Aufbau - BETA - Funktionen können sich ändern 🚧</div>';
       var activeL=LO.filter(l=>l.status==='active'||!l.status);
       var closedL=LO.filter(l=>l.status==='closed');
       var totalCollat=activeL.reduce((s,l)=>s+parseFloat(l.initialcollateral||0),0);
