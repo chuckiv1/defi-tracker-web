@@ -17,5 +17,5 @@ jobs:
             set -e
             cd /root/defi-tracker-web
             git pull --ff-only
-            docker compose pull
-            docker compose up -d --remove-orphans
+            docker compose pull db
+            docker compose up -d --build --remove-orphans
