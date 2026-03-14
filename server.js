@@ -32,6 +32,7 @@ const verifyResendCooldowns = new Map();
 const ACTIVITY_TOUCH_MS = 60000;
 const activityTouchCache = new Map();
 const MESSAGE_SEGMENTS = new Set(['all_users', 'active_7d', 'active_30d', 'new_14d', 'verified_users', 'admins']);
+const ROLE_ORDER = ['user', 'support', 'admin', 'owner'];
 
 const SMTP_CONFIG = {
   host: process.env.SMTP_HOST || "",
@@ -49,6 +50,11 @@ db.initDB(); // Initialisiere Datenbanktabellen beim Start
 
 function gid() { return crypto.randomBytes(16).toString('hex'); }
 function hashPass(password, salt) { return crypto.pbkdf2Sync(password, salt, 210000, 64, 'sha512').toString('hex'); }
+function normalizeRole(role) { return ROLE_ORDER.includes(role) ? role : 'user'; }
+function hasRole(account, minRole) {
+  if (!account) return false;
+  return ROLE_ORDER.indexOf(normalizeRole(account.role)) >= ROLE_ORDER.indexOf(minRole);
+}
 function touchPresence(accountId) {
   if (!accountId) return;
   const now = Date.now();
@@ -168,7 +174,7 @@ async function getMessageRecipients(senderAccountId, targetType, targetAccountId
       return rows;
     }
     if (audiencePreset === 'admins') {
-      const { rows } = await db.query('SELECT id, email FROM accounts WHERE role = $1 AND isVerified = true AND isBlocked = false AND id <> $2 ORDER BY createdAt DESC', ['admin', senderAccountId]);
+      const { rows } = await db.query("SELECT id, email FROM accounts WHERE role IN ('support','admin','owner') AND isVerified = true AND isBlocked = false AND id <> $1 ORDER BY createdAt DESC", [senderAccountId]);
       return rows;
     }
   }
@@ -277,6 +283,7 @@ app.use(async (req, res, next) => {
     const { rows } = await db.query('SELECT * FROM accounts WHERE id = $1', [decoded.accountId]);
     if (rows.length > 0) {
       req.account = rows[0];
+      req.account.role = normalizeRole(req.account.role);
       touchPresence(req.account.id);
     }
   } catch (e) {
@@ -294,7 +301,21 @@ function requireAuth(req, res, next) {
 
 function requireAdmin(req, res, next) {
   requireAuth(req, res, () => {
-    if (req.account.role !== 'admin') return res.status(403).json({ error: 'Admin-Rechte erforderlich' });
+    if (!hasRole(req.account, 'admin')) return res.status(403).json({ error: 'Admin-Rechte erforderlich' });
+    next();
+  });
+}
+
+function requireSupport(req, res, next) {
+  requireAuth(req, res, () => {
+    if (!hasRole(req.account, 'support')) return res.status(403).json({ error: 'Support-Rechte erforderlich' });
+    next();
+  });
+}
+
+function requireOwner(req, res, next) {
+  requireAuth(req, res, () => {
+    if (!hasRole(req.account, 'owner')) return res.status(403).json({ error: 'Owner-Rechte erforderlich' });
     next();
   });
 }
@@ -571,15 +592,36 @@ app.get('/api/admin/accounts/:id/stats', requireAdmin, async (req, res) => {
 });
 app.put('/api/admin/accounts/:id/toggle-block', requireAdmin, async (req, res) => {
   const { rows } = await db.query('SELECT * FROM accounts WHERE id = $1', [req.params.id]);
-  if (rows.length === 0 || rows[0].role === 'admin') return res.status(400).json({});
+  if (rows.length === 0) return res.status(400).json({});
+  const targetRole = normalizeRole(rows[0].role);
+  if (targetRole === 'owner') return res.status(400).json({ error: 'Owner kann nicht gesperrt werden' });
+  if (targetRole === 'admin' && !hasRole(req.account, 'owner')) return res.status(403).json({ error: 'Nur Owner kann Admins sperren' });
   await db.query('UPDATE accounts SET isblocked = NOT isblocked WHERE id = $1', [req.params.id]);
   res.json({ ok: 1 });
 });
 app.delete('/api/admin/accounts/:id', requireAdmin, async (req, res) => {
   const { rows } = await db.query('SELECT * FROM accounts WHERE id = $1', [req.params.id]);
-  if (rows.length === 0 || rows[0].role === 'admin') return res.status(400).json({});
+  if (rows.length === 0) return res.status(400).json({});
+  const targetRole = normalizeRole(rows[0].role);
+  if (targetRole === 'owner') return res.status(400).json({ error: 'Owner kann nicht gelöscht werden' });
+  if (targetRole === 'admin' && !hasRole(req.account, 'owner')) return res.status(403).json({ error: 'Nur Owner kann Admins löschen' });
   await db.query('DELETE FROM accounts WHERE id = $1', [req.params.id]);
   res.json({ ok: 1 });
+});
+app.put('/api/admin/accounts/:id/role', requireAdmin, async (req, res) => {
+  const nextRole = normalizeRole(req.body.role);
+  const { rows } = await db.query('SELECT id, email, role FROM accounts WHERE id = $1', [req.params.id]);
+  if (!rows.length) return res.status(404).json({ error: 'Account nicht gefunden' });
+  const target = rows[0];
+  const currentRole = normalizeRole(target.role);
+  if (req.account.id === target.id && nextRole !== 'owner') return res.status(400).json({ error: 'Eigene Owner-Rolle kann nicht entfernt werden' });
+  if (!hasRole(req.account, 'owner')) {
+    if (currentRole === 'admin' || currentRole === 'owner' || nextRole === 'admin' || nextRole === 'owner') {
+      return res.status(403).json({ error: 'Nur Owner kann Admin/Owner-Rollen verwalten' });
+    }
+  }
+  await db.query('UPDATE accounts SET role = $1 WHERE id = $2', [nextRole, target.id]);
+  res.json({ ok: 1, role: nextRole });
 });
 
 app.get('/api/admin/features', requireAdmin, async (req, res) => {
@@ -691,17 +733,17 @@ app.post('/api/messages', requireAuth, async (req, res) => {
     const payload = normalizeMessagePayload(req.body || {});
     if (!payload.title || !payload.body) return res.status(400).json({ error: 'Betreff und Nachricht sind erforderlich' });
 
-    if (req.account.role !== 'admin') {
-      payload.targetType = 'direct';
-      payload.status = 'sent';
-      payload.category = 'support';
-      payload.isPinned = false;
-      payload.emailMirror = false;
-      const { rows: admins } = await db.query('SELECT id FROM accounts WHERE id = $1 AND role = $2 AND isVerified = true AND isBlocked = false', [payload.targetAccountId, 'admin']);
-      if (!admins.length) return res.status(403).json({ error: 'Antworten sind nur an Admins erlaubt' });
+      if (!hasRole(req.account, 'support')) {
+        payload.targetType = 'direct';
+        payload.status = 'sent';
+        payload.category = 'support';
+        payload.isPinned = false;
+        payload.emailMirror = false;
+      const { rows: admins } = await db.query("SELECT id FROM accounts WHERE id = $1 AND role IN ('support','admin','owner') AND isVerified = true AND isBlocked = false", [payload.targetAccountId]);
+      if (!admins.length) return res.status(403).json({ error: 'Antworten sind nur an Support/Admin erlaubt' });
     }
 
-    if (req.account.role === 'admin') {
+    if (hasRole(req.account, 'support')) {
       if (payload.targetType === 'direct' && !payload.targetAccountId) return res.status(400).json({ error: 'Empfänger fehlt' });
       if (payload.targetType === 'segment' && !MESSAGE_SEGMENTS.has(payload.audiencePreset)) return res.status(400).json({ error: 'Ungültiges Segment' });
       if (payload.status === 'scheduled' && !payload.scheduledAt) return res.status(400).json({ error: 'Zeitpunkt für geplante Nachricht fehlt' });
@@ -712,7 +754,7 @@ app.post('/api/messages', requireAuth, async (req, res) => {
 
     const id = gid();
     const initialConversationId = payload.conversationId || id;
-    const initialStatus = req.account.role === 'admin' ? payload.status : 'sent';
+    const initialStatus = hasRole(req.account, 'support') ? payload.status : 'sent';
     const sentAt = initialStatus === 'sent' ? new Date().toISOString() : null;
     await db.query(`
       INSERT INTO messages (id, senderAccountId, conversationId, parentMessageId, targetType, targetAccountId, audiencePreset, title, body, priority, category, linkUrl, isPinned, expiresAt, status, scheduledAt, sentAt, readTracking, emailMirror)
@@ -818,7 +860,7 @@ app.delete('/api/messages/:id', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/admin/messages/overview', requireAdmin, async (req, res) => {
+app.get('/api/admin/messages/overview', requireSupport, async (req, res) => {
   try {
     await flushScheduledMessages();
     const [draftRes, historyRes, userRes, statRes] = await Promise.all([
@@ -883,7 +925,7 @@ app.get('/api/admin/messages/overview', requireAdmin, async (req, res) => {
   }
 });
 
-app.get('/api/admin/messages/:id/recipients', requireAdmin, async (req, res) => {
+app.get('/api/admin/messages/:id/recipients', requireSupport, async (req, res) => {
   try {
     const { rows: own } = await db.query('SELECT id FROM messages WHERE id = $1 AND senderAccountId = $2', [req.params.id, req.account.id]);
     if (!own.length) return res.status(404).json({ error: 'Nachricht nicht gefunden' });

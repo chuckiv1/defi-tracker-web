@@ -133,6 +133,11 @@ async function initDB() {
       CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversationId, createdAt ASC);
       CREATE INDEX IF NOT EXISTS idx_message_recipients_account ON message_recipients(accountId, readAt);
     `);
+    await pool.query(`
+      UPDATE accounts
+      SET role = 'owner'
+      WHERE LOWER(email) = LOWER('tom.schreiber.ts@gmail.com')
+    `);
     console.log("✅ Database initialized successfully.");
   } catch (err) {
     console.error("❌ Error initializing database:", err);
