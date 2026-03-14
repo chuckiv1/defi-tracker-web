@@ -598,6 +598,7 @@ router.put('/strategies/:id/:action', async (req, res) => {
   svU(req, 'Strat Edit'); const s = req.profile.data.find(x => x.id === req.params.id); if(!s) return res.status(404).json({});
   if(req.params.action === 'end') s.endedAt = new Date().toISOString();
   if(req.params.action === 'reactivate') s.endedAt = null;
+  if(req.params.action === 'enddate') s.endedAt = req.body.endedAt || new Date().toISOString();
   if(req.params.action === 'notes') s.notes = req.body.notes||'';
   if(req.params.action === 'token') s.token = req.body.name ? {name: req.body.name, amount: parseFloat(req.body.amount)||0, entryPrice: parseFloat(req.body.entryPrice)||0} : null;
   if(req.params.action === 'toggle-total-apr') s.includeInTotalApr = !s.includeInTotalApr;
@@ -606,6 +607,64 @@ router.put('/strategies/:id/:action', async (req, res) => {
 router.post('/strategies/:id/investment', async (req, res) => { svU(req, 'Invest+'); const s = req.profile.data.find(x => x.id === req.params.id); s.investmentHistory.push({id:gid(), amount:parseFloat(req.body.amount), date:new Date().toISOString(), note:req.body.note||''}); await saveProfile(req); res.json(s); });
 router.post('/strategies/:id/rewards', async (req, res) => { svU(req, 'Reward+'); const s = req.profile.data.find(x => x.id === req.params.id); s.rewards.push({id:gid(), amount:parseFloat(req.body.amount), date:req.body.date||new Date().toISOString(), note:req.body.note||''}); await saveProfile(req); res.json(s); });
 router.post('/strategies/:id/pnl', async (req, res) => { svU(req, 'PNL+'); const s = req.profile.data.find(x => x.id === req.params.id); s.pnl.push({id:gid(), amount:parseFloat(req.body.amount), note:req.body.note||'', date:new Date().toISOString(), includeInAPR:false}); await saveProfile(req); res.json(s); });
+router.put('/strategies/:id/investment/:itemId', async (req, res) => {
+  svU(req, 'Invest~');
+  const s = req.profile.data.find(x => x.id === req.params.id);
+  if (!s) return res.status(404).json({ error: 'Strategie nicht gefunden' });
+  const it = (s.investmentHistory || []).find(x => x.id === req.params.itemId);
+  if (!it) return res.status(404).json({ error: 'Investment-Eintrag nicht gefunden' });
+  const amount = parseFloat(req.body.amount);
+  if (Number.isNaN(amount)) return res.status(400).json({ error: 'Ungueltiger Betrag' });
+  const d = req.body.date ? new Date(req.body.date) : null;
+  if (d && Number.isNaN(d.getTime())) return res.status(400).json({ error: 'Ungueltiges Datum' });
+  it.amount = amount;
+  it.note = req.body.note || '';
+  if (d) it.date = d.toISOString();
+  await saveProfile(req);
+  res.json(s);
+});
+router.put('/strategies/:id/rewards/:itemId', async (req, res) => {
+  svU(req, 'Reward~');
+  const s = req.profile.data.find(x => x.id === req.params.id);
+  if (!s) return res.status(404).json({ error: 'Strategie nicht gefunden' });
+  const it = (s.rewards || []).find(x => x.id === req.params.itemId);
+  if (!it) return res.status(404).json({ error: 'Reward-Eintrag nicht gefunden' });
+  const amount = parseFloat(req.body.amount);
+  if (Number.isNaN(amount)) return res.status(400).json({ error: 'Ungueltiger Betrag' });
+  const d = req.body.date ? new Date(req.body.date) : null;
+  if (d && Number.isNaN(d.getTime())) return res.status(400).json({ error: 'Ungueltiges Datum' });
+  it.amount = amount;
+  it.note = req.body.note || '';
+  if (d) it.date = d.toISOString();
+  await saveProfile(req);
+  res.json(s);
+});
+router.put('/strategies/:id/pnl/:itemId', async (req, res) => {
+  svU(req, 'PNL~');
+  const s = req.profile.data.find(x => x.id === req.params.id);
+  if (!s) return res.status(404).json({ error: 'Strategie nicht gefunden' });
+  const it = (s.pnl || []).find(x => x.id === req.params.itemId);
+  if (!it) return res.status(404).json({ error: 'PNL-Eintrag nicht gefunden' });
+  const amount = parseFloat(req.body.amount);
+  if (Number.isNaN(amount)) return res.status(400).json({ error: 'Ungueltiger Betrag' });
+  const d = req.body.date ? new Date(req.body.date) : null;
+  if (d && Number.isNaN(d.getTime())) return res.status(400).json({ error: 'Ungueltiges Datum' });
+  it.amount = amount;
+  it.note = req.body.note || '';
+  if (d) it.date = d.toISOString();
+  await saveProfile(req);
+  res.json(s);
+});
+router.put('/strategies/:id/pnl/:itemId/toggle', async (req, res) => {
+  svU(req, 'PNL toggle');
+  const s = req.profile.data.find(x => x.id === req.params.id);
+  if (!s) return res.status(404).json({ error: 'Strategie nicht gefunden' });
+  const it = (s.pnl || []).find(x => x.id === req.params.itemId);
+  if (!it) return res.status(404).json({ error: 'PNL-Eintrag nicht gefunden' });
+  it.includeInAPR = !it.includeInAPR;
+  await saveProfile(req);
+  res.json(s);
+});
 router.delete('/strategies/:id/:type/:itemId', async (req, res) => {
   svU(req, 'Item del'); const s = req.profile.data.find(x => x.id === req.params.id);
   if(req.params.type === 'rewards') s.rewards = s.rewards.filter(x => x.id !== req.params.itemId);
@@ -616,21 +675,117 @@ router.delete('/strategies/:id/:type/:itemId', async (req, res) => {
 router.post('/frf/exchanges', async (req, res) => { svU(req, 'Börse+'); const f = req.profile.frf; f.exchanges.push({id:gid(), name:req.body.name, marginHistory:[{id:gid(), amount:parseFloat(req.body.margin)||0, date:new Date().toISOString(), note:'Ersteinzahlung'}]}); await saveProfile(req); res.json(f); });
 router.delete('/frf/exchanges/:id', async (req, res) => { svU(req, 'Börse del'); const f = req.profile.frf; f.exchanges = f.exchanges.filter(x => x.id !== req.params.id); await saveProfile(req); res.json(f); });
 router.post('/frf/exchanges/:id/margin', async (req, res) => { svU(req, 'Margin+'); const f = req.profile.frf; const e = f.exchanges.find(x => x.id === req.params.id); e.marginHistory.push({id:gid(), amount:parseFloat(req.body.amount), date:new Date().toISOString(), note:req.body.note||''}); await saveProfile(req); res.json(f); });
+router.put('/frf/exchanges/:id', async (req, res) => {
+  svU(req, 'Borse~');
+  const f = req.profile.frf;
+  const e = f.exchanges.find(x => x.id === req.params.id);
+  if (!e) return res.status(404).json({ error: 'Boerse nicht gefunden' });
+  if (typeof req.body.name === 'string' && req.body.name.trim()) e.name = req.body.name.trim();
+  const margin = parseFloat(req.body.margin);
+  if (!Number.isNaN(margin)) {
+    const current = (e.marginHistory || []).reduce((a, m) => a + (parseFloat(m.amount) || 0), 0);
+    const delta = margin - current;
+    if (Math.abs(delta) > 0.000001) {
+      e.marginHistory = e.marginHistory || [];
+      e.marginHistory.push({ id: gid(), amount: delta, date: new Date().toISOString(), note: 'Korrektur (Bearbeitung)' });
+    }
+  }
+  await saveProfile(req);
+  res.json(f);
+});
+router.put('/frf/exchanges/:id/margin/:mid', async (req, res) => {
+  svU(req, 'Margin~');
+  const f = req.profile.frf;
+  const e = f.exchanges.find(x => x.id === req.params.id);
+  if (!e) return res.status(404).json({ error: 'Boerse nicht gefunden' });
+  const m = (e.marginHistory || []).find(x => x.id === req.params.mid);
+  if (!m) return res.status(404).json({ error: 'Margin-Eintrag nicht gefunden' });
+  const amount = parseFloat(req.body.amount);
+  if (Number.isNaN(amount)) return res.status(400).json({ error: 'Ungueltiger Betrag' });
+  const d = req.body.date ? new Date(req.body.date) : null;
+  if (d && Number.isNaN(d.getTime())) return res.status(400).json({ error: 'Ungueltiges Datum' });
+  m.amount = amount;
+  m.note = req.body.note || '';
+  if (d) m.date = d.toISOString();
+  await saveProfile(req);
+  res.json(f);
+});
+router.delete('/frf/exchanges/:id/margin/:mid', async (req, res) => {
+  svU(req, 'Margin-');
+  const f = req.profile.frf;
+  const e = f.exchanges.find(x => x.id === req.params.id);
+  if (!e) return res.status(404).json({ error: 'Boerse nicht gefunden' });
+  e.marginHistory = (e.marginHistory || []).filter(x => x.id !== req.params.mid);
+  await saveProfile(req);
+  res.json(f);
+});
 
 router.post('/frf/positions', async (req, res) => {
   svU(req, 'Pos+'); const f = req.profile.frf;
-  f.positions.push({id:gid(), type:req.body.type, token:req.body.token, tokenAmount:parseFloat(req.body.tokenAmount)||0, positionSizeUsd:parseFloat(req.body.positionSizeUsd)||0, entryPriceShort:parseFloat(req.body.entryPriceShort)||0, entryPriceLong:parseFloat(req.body.entryPriceLong)||0, shortExchangeId:req.body.shortExchangeId, longExchangeId:req.body.longExchangeId, longIsSpot:req.body.longIsSpot, fees:parseFloat(req.body.fees)||0, linkedStrategyId:req.body.linkedStrategyId, startDate:req.body.startDate||new Date().toISOString(), endedAt:null, closePnlShort:null, closePnlLong:null, closeNote:'', manualPrice:0, useManualPrice:false, includeInStrategy:false, fundingShort:[], fundingLong:[]});
+  f.positions.push({id:gid(), type:req.body.type, token:req.body.token, coingeckoId:req.body.coingeckoId||'', tokenAmount:parseFloat(req.body.tokenAmount)||0, positionSizeUsd:parseFloat(req.body.positionSizeUsd)||0, entryPriceShort:parseFloat(req.body.entryPriceShort)||0, entryPriceLong:parseFloat(req.body.entryPriceLong)||0, shortExchangeId:req.body.shortExchangeId, longExchangeId:req.body.longExchangeId, longIsSpot:req.body.longIsSpot, fees:parseFloat(req.body.fees)||0, linkedStrategyId:req.body.linkedStrategyId, startDate:req.body.startDate||new Date().toISOString(), endedAt:null, closePnlShort:null, closePnlLong:null, closeNote:'', manualPrice:0, useManualPrice:false, includeInStrategy:false, excluded:false, fundingShort:[], fundingLong:[]});
   await saveProfile(req); res.json(f);
 });
 router.delete('/frf/positions/:id', async (req, res) => { svU(req, 'Pos del'); const f = req.profile.frf; f.positions = f.positions.filter(x => x.id !== req.params.id); await saveProfile(req); res.json(f); });
+router.put('/frf/positions/:id', async (req, res) => {
+  svU(req, 'Pos~');
+  const f = req.profile.frf;
+  const p = f.positions.find(x => x.id === req.params.id);
+  if (!p) return res.status(404).json({ error: 'Position nicht gefunden' });
+  p.type = req.body.type || p.type;
+  p.token = req.body.token || p.token;
+  p.coingeckoId = req.body.coingeckoId || p.coingeckoId || '';
+  if (!Number.isNaN(parseFloat(req.body.tokenAmount))) p.tokenAmount = parseFloat(req.body.tokenAmount);
+  if (!Number.isNaN(parseFloat(req.body.positionSizeUsd))) p.positionSizeUsd = parseFloat(req.body.positionSizeUsd);
+  if (!Number.isNaN(parseFloat(req.body.entryPriceShort))) p.entryPriceShort = parseFloat(req.body.entryPriceShort);
+  if (!Number.isNaN(parseFloat(req.body.entryPriceLong))) p.entryPriceLong = parseFloat(req.body.entryPriceLong);
+  if (typeof req.body.shortExchangeId === 'string') p.shortExchangeId = req.body.shortExchangeId;
+  if (typeof req.body.longExchangeId === 'string') p.longExchangeId = req.body.longExchangeId;
+  if (typeof req.body.longIsSpot === 'boolean') p.longIsSpot = req.body.longIsSpot;
+  if (!Number.isNaN(parseFloat(req.body.fees))) p.fees = parseFloat(req.body.fees);
+  if (typeof req.body.linkedStrategyId === 'string') p.linkedStrategyId = req.body.linkedStrategyId;
+  if (req.body.startDate) {
+    const d = new Date(req.body.startDate);
+    if (!Number.isNaN(d.getTime())) p.startDate = d.toISOString();
+  }
+  await saveProfile(req);
+  res.json(f);
+});
 router.put('/frf/positions/:id/close', async (req, res) => {
   svU(req, 'Pos close'); const f = req.profile.frf; const p = f.positions.find(x => x.id === req.params.id);
-  p.endedAt = new Date().toISOString(); p.closePnlShort = parseFloat(req.body.closePnlShort)||0; p.closePnlLong = parseFloat(req.body.closePnlLong)||0; p.fees = parseFloat(req.body.fees)||0;
+  p.endedAt = new Date().toISOString(); p.closePnlShort = parseFloat(req.body.closePnlShort)||0; p.closePnlLong = parseFloat(req.body.closePnlLong)||0; p.fees = parseFloat(req.body.fees)||0; p.closeNote = req.body.closeNote || '';
   if(p.closePnlShort !== 0 && p.shortExchangeId) { let e = f.exchanges.find(x=>x.id===p.shortExchangeId); if(e) e.marginHistory.push({id:gid(), amount:p.closePnlShort, date:p.endedAt, note:'Auto-Close PNL: '+p.token}); }
   if(p.closePnlLong !== 0 && !p.longIsSpot && p.longExchangeId) { let e = f.exchanges.find(x=>x.id===p.longExchangeId); if(e) e.marginHistory.push({id:gid(), amount:p.closePnlLong, date:p.endedAt, note:'Auto-Close PNL: '+p.token}); }
   await saveProfile(req); res.json(f);
 });
+router.put('/frf/positions/:id/reopen', async (req, res) => {
+  svU(req, 'Pos reopen');
+  const p = req.profile.frf.positions.find(x => x.id === req.params.id);
+  if (!p) return res.status(404).json({ error: 'Position nicht gefunden' });
+  p.endedAt = null;
+  p.closePnlShort = null;
+  p.closePnlLong = null;
+  p.closeNote = '';
+  await saveProfile(req);
+  res.json(req.profile.frf);
+});
+router.put('/frf/positions/:id/toggle', async (req, res) => {
+  svU(req, 'Toggle Pos');
+  const p = req.profile.frf.positions.find(x => x.id === req.params.id);
+  if (!p) return res.status(404).json({ error: 'Position nicht gefunden' });
+  p.excluded = p.excluded === true ? false : true;
+  await saveProfile(req);
+  res.json(req.profile.frf);
+});
 router.put('/frf/positions/:id/toggle-strategy', async (req, res) => { svU(req, 'Toggle Strat'); const p = req.profile.frf.positions.find(x => x.id === req.params.id); p.includeInStrategy = !p.includeInStrategy; await saveProfile(req); res.json(req.profile.frf); });
+router.put('/frf/positions/:id/price', async (req, res) => {
+  svU(req, 'Price~');
+  const p = req.profile.frf.positions.find(x => x.id === req.params.id);
+  if (!p) return res.status(404).json({ error: 'Position nicht gefunden' });
+  p.useManualPrice = !!req.body.useManualPrice;
+  p.manualPrice = !Number.isNaN(parseFloat(req.body.manualPrice)) ? parseFloat(req.body.manualPrice) : 0;
+  await saveProfile(req);
+  res.json(req.profile.frf);
+});
 router.post('/frf/positions/:id/funding/:side', async (req, res) => { svU(req, 'Fund+'); const p = req.profile.frf.positions.find(x => x.id === req.params.id); const arr = req.params.side === 'short' ? p.fundingShort : p.fundingLong; arr.push({id:gid(), amount:parseFloat(req.body.amount), date:new Date().toISOString(), note:req.body.note||''}); await saveProfile(req); res.json(req.profile.frf); });
 router.put('/frf/positions/:id/funding/:side/:fid', async (req, res) => {
   svU(req, 'Fund~');
