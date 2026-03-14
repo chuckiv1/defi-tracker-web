@@ -82,7 +82,7 @@ function normUi(){
   if(["size","az","za","apr","runtime"].indexOf(FRF_SORT)===-1)FRF_SORT="size";
   if(!EXP||typeof EXP!=="object")EXP={};
   if(V==="detail"&&(!SI||!S.find(x=>x.id===SI))){SI=null;V="active"}
-  if(V==="looping"&&(!PID||IS_DEMO)){V="active"}
+  if(V==="looping"&&!PID){V="active"}
   if(V==="frf_pos"&&(!FPI||!FR.positions.find(x=>x.id===FPI))){FPI=null;V="frf"}
 }
 
@@ -202,6 +202,7 @@ function loadData() {
       api('/api/demo-data').then(d => {
         S = d.data.data || [];
         FR = d.data.frf || {exchanges:[], positions:[]};
+        LO = d.data.loops || [];
         U = [];
         R();
         fetchPrices();
@@ -246,7 +247,8 @@ function logout() { api('/api/auth/logout', {method:'POST'}).then(()=>{PID=null;
 
 function hLogin() {
   let e = document.getElementById('l-email').value, p = document.getElementById('l-pass').value;
-  fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email:e, password:p})})
+  let rememberMe = !!document.getElementById('l-remember')?.checked;
+  fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email:e, password:p, rememberMe:rememberMe})})
     .then(r => r.json().then(data => ({status:r.status, data})))
     .then(r => {
       if(r.status===200) { VERIFY_EMAIL=""; VERIFY_RETRY_AT=0; cm(); loadData(); return; }
@@ -467,7 +469,21 @@ function hFemm(){var o=M.femm;cm();F("/api/frf/exchanges/"+o.eid+"/margin/"+o.mi
 function hFpos(){var tk=document.getElementById("f-ptk").value.trim();if(!tk)return;var lg=document.getElementById("f-plg").value;var sd=document.getElementById("f-psd").value,st=document.getElementById("f-pst").value;var startDate=sd?new Date(sd+"T"+(st||"00:00")).toISOString():null;cm();F("/api/frf/positions",{method:"POST",body:JSON.stringify({type:document.getElementById("f-pt").value,token:tk,coingeckoId:CG_REV[tk.toUpperCase()]||"",tokenAmount:parseFloat(document.getElementById("f-pta").value)||0,positionSizeUsd:0,entryPriceShort:parseFloat(document.getElementById("f-ptes").value)||0,entryPriceLong:parseFloat(document.getElementById("f-ptel").value)||0,shortExchangeId:document.getElementById("f-psh").value,longExchangeId:lg==="_spot"?"":lg,longIsSpot:lg==="_spot",fees:parseFloat(document.getElementById("f-pfe").value)||0,linkedStrategyId:document.getElementById("f-pls").value,startDate:startDate})}).then(loadData)}
 function hFepos(){var o=M.fepos;var fp=FR.positions.find(x=>x.id===o.id);if(!fp)return;var tp=document.getElementById("f-eptype").value;var lg=document.getElementById("f-eplg").value;var tk=document.getElementById("f-eptk").value.trim();var sd=document.getElementById("f-epsd").value,st=document.getElementById("f-epst").value;var startDate=sd?new Date(sd+"T"+(st||"00:00")).toISOString():fp.startDate;cm();F("/api/frf/positions/"+o.id,{method:"PUT",body:JSON.stringify({type:tp,token:tk,coingeckoId:CG_REV[tk.toUpperCase()]||fp.coingeckoId,tokenAmount:parseFloat(document.getElementById("f-epta").value),positionSizeUsd:parseFloat(document.getElementById("f-epts").value)||0,entryPriceShort:parseFloat(document.getElementById("f-eptes").value),entryPriceLong:parseFloat(document.getElementById("f-eptel").value),shortExchangeId:document.getElementById("f-epsh").value,longExchangeId:lg==="_spot"?"":lg,longIsSpot:lg==="_spot",fees:parseFloat(document.getElementById("f-epfe").value)||0,linkedStrategyId:document.getElementById("f-epls").value,startDate:startDate})}).then(loadData)}
 function hFfund(){var o=M.ffund;var a=parseFloat(document.getElementById("f-ffa").value);if(isNaN(a))return;cm();F("/api/frf/positions/"+o.pid+"/funding/"+o.side,{method:"POST",body:JSON.stringify({amount:a,note:document.getElementById("f-ffn").value||""})}).then(loadData)}
-function hFefund(){var o=M.fefund;cm();F("/api/frf/positions/"+o.pid+"/funding/"+o.side+"/"+o.fid,{method:"PUT",body:JSON.stringify({amount:parseFloat(document.getElementById("f-fefa").value),note:document.getElementById("f-fefn").value||"",date:new Date(document.getElementById("f-fefd").value+"T"+(document.getElementById("f-feft").value||"00:00")).toISOString()})}).then(loadData)}
+function hFefund(){
+  var o=M.fefund;
+  var amt=parseFloat(document.getElementById("f-fefa").value);
+  if(isNaN(amt))return alert("Bitte einen gueltigen Betrag eingeben.");
+  var d=document.getElementById("f-fefd").value,t=document.getElementById("f-feft").value||"00:00",iso=o.dt||new Date().toISOString();
+  if(d){
+    var dt=new Date(d+"T"+t);
+    if(isNaN(dt.getTime()))return alert("Bitte ein gueltiges Datum/Uhrzeit eingeben.");
+    iso=dt.toISOString();
+  }
+  cm();
+  api("/api/frf/positions/"+o.pid+"/funding/"+o.side+"/"+o.fid,{method:"PUT",body:JSON.stringify({amount:amt,note:document.getElementById("f-fefn").value||"",date:iso})})
+    .then(function(r){if(r.status!==200){alert((r.data&&r.data.error)||"Funding konnte nicht gespeichert werden.");return;}loadData();})
+    .catch(()=>{});
+}
 function hFclose(){var o=M.fclose;cm();F("/api/frf/positions/"+o.id+"/close",{method:"PUT",body:JSON.stringify({closePnlShort:parseFloat(document.getElementById("f-fcs").value)||0,closePnlLong:parseFloat(document.getElementById("f-fcl").value)||0,fees:parseFloat(document.getElementById("f-fcf").value)||0,closeNote:document.getElementById("f-fcn").value||""})}).then(()=>{if(FPI===o.id){FPI=null;V="frf"}loadData()})}
 function hFprc(){var ump=document.getElementById("f-ump").checked;var mp=ump?parseFloat(document.getElementById("f-mp").value):0;cm();F("/api/frf/positions/"+FPI+"/price",{method:"PUT",body:JSON.stringify({useManualPrice:ump,manualPrice:mp})}).then(loadData)}
 
@@ -779,7 +795,7 @@ else if(V === 'community') {
 
   h += '</main>';
 
-  if(M.login) { h += '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Login</div><div class="fg"><label>E-Mail</label><input id="l-email" type="email" value="'+es(VERIFY_EMAIL||'')+'"></div><div class="fg"><label>Passwort</label><div class="pw-box"><input id="l-pass" type="password"><button class="pw-btn" onclick="document.getElementById(\'l-pass\').type=document.getElementById(\'l-pass\').type===\'password\'?\'text\':\'password\'">👁</button></div></div>'+(VERIFY_EMAIL?'<div style="margin:6px 0 0;padding:10px 12px;background:var(--bg2);border:1px solid var(--bd);border-radius:8px;font-size:12px;color:var(--t3)">E-Mail noch nicht verifiziert?<button class="bt bcn" style="margin-left:8px;padding:6px 10px;font-size:12px" '+(Date.now()<VERIFY_RETRY_AT?'disabled':'')+' onclick="resendVerifyMail()">'+verifyCooldownText()+'</button></div>':'')+'<div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bb" style="flex:1;justify-content:center" onclick="hLogin()">Einloggen</button></div><div style="text-align:center;margin-top:16px;font-size:12px;color:var(--t4)">Noch keinen Account? <a href="#" style="color:var(--g)" onclick="M.login=false;M.reg=1;R()">Registrieren</a></div></div></div>'; }
+  if(M.login) { h += '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Login</div><div class="fg"><label>E-Mail</label><input id="l-email" type="email" value="'+es(VERIFY_EMAIL||'')+'"></div><div class="fg"><label>Passwort</label><div class="pw-box"><input id="l-pass" type="password"><button class="pw-btn" onclick="document.getElementById(\'l-pass\').type=document.getElementById(\'l-pass\').type===\'password\'?\'text\':\'password\'">👁</button></div></div><div style="display:flex;align-items:center;gap:8px;margin:8px 0 2px"><input id="l-remember" type="checkbox" style="width:16px;height:16px;accent-color:var(--g)"><label for="l-remember" style="font-size:12px;color:var(--t3);cursor:pointer">7 Tage eingeloggt bleiben</label></div>'+(VERIFY_EMAIL?'<div style="margin:6px 0 0;padding:10px 12px;background:var(--bg2);border:1px solid var(--bd);border-radius:8px;font-size:12px;color:var(--t3)">E-Mail noch nicht verifiziert?<button class="bt bcn" style="margin-left:8px;padding:6px 10px;font-size:12px" '+(Date.now()<VERIFY_RETRY_AT?'disabled':'')+' onclick="resendVerifyMail()">'+verifyCooldownText()+'</button></div>':'')+'<div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bb" style="flex:1;justify-content:center" onclick="hLogin()">Einloggen</button></div><div style="text-align:center;margin-top:16px;font-size:12px;color:var(--t4)">Noch keinen Account? <a href="#" style="color:var(--g)" onclick="M.login=false;M.reg=1;R()">Registrieren</a></div></div></div>'; }
   if(M.reg) { h += '<div class="ov"><div class="mdl"><div class="mdt">Account Registrieren</div><div class="fg"><label>E-Mail</label><input id="r-email" type="email"></div><div class="fg"><label>Passwort</label><div class="pw-box"><input id="r-p1" type="password"><button class="pw-btn" onclick="document.getElementById(\'r-p1\').type=document.getElementById(\'r-p1\').type===\'password\'?\'text\':\'password\'">👁</button></div></div><div class="fg"><label>Passwort wiederholen</label><input id="r-p2" type="password"></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" style="flex:1;justify-content:center" onclick="hReg()">Registrieren</button></div></div></div>'; }
   if(M.np) { h += '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Neues Profil (Wallet)</div><div class="fg"><label>Name</label><input id="p-name" placeholder="z.B. Main Wallet"></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hNewProf()">Erstellen</button></div></div></div>'; }
   if(M.eu){h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Profil umbenennen</div><div class="fg"><label>Neuer Name</label><input id="f-eun" value="'+es(M.eu.name)+'"></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="api(\'/api/profiles/'+M.eu.id+'\',{method:\'PUT\',body:JSON.stringify({name:document.getElementById(\'f-eun\').value})}).then(()=>{loadData();cm()})">Speichern</button></div></div></div>';}

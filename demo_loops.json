@@ -1,0 +1,40 @@
+[
+  {
+    "id": "demo_loop_1",
+    "name": "ETH / USDC",
+    "startdate": "2026-02-01T09:00:00.000Z",
+    "enddate": null,
+    "collateraltoken": "ETH",
+    "borrowtoken": "USDC",
+    "startcollateral": 5000,
+    "collateralprice": 2500,
+    "startcollateralamount": 2,
+    "supplyapy": 8.2,
+    "borrowedamount": 9000,
+    "borrowapy": 4.1,
+    "endcollateralamount": 2.08,
+    "endborrowedamount": 9050,
+    "leverage": 3,
+    "status": "active",
+    "notes": "Demo Loop 1"
+  },
+  {
+    "id": "demo_loop_2",
+    "name": "SOL / USDC",
+    "startdate": "2026-01-15T11:30:00.000Z",
+    "enddate": null,
+    "collateraltoken": "SOL",
+    "borrowtoken": "USDC",
+    "startcollateral": 3000,
+    "collateralprice": 150,
+    "startcollateralamount": 20,
+    "supplyapy": 6.4,
+    "borrowedamount": 3600,
+    "borrowapy": 7.1,
+    "endcollateralamount": 19.6,
+    "endborrowedamount": 3650,
+    "leverage": 2.2,
+    "status": "active",
+    "notes": "Demo Loop 2"
+  }
+]

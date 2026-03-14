@@ -69,6 +69,60 @@
         { "id": "dfs2a", "amount": 80, "date": "2024-02-15T12:00:00.000Z", "note": "Funding" }
       ],
       "fundingLong": []
+    },
+    {
+      "id": "demo_pos_3",
+      "type": "frf",
+      "token": "SOL",
+      "tokenAmount": 80,
+      "positionSizeUsd": 12800,
+      "entryPriceShort": 160,
+      "entryPriceLong": 158,
+      "shortExchangeId": "demo_ex_2",
+      "longExchangeId": "demo_ex_1",
+      "longIsSpot": false,
+      "fees": 12,
+      "linkedStrategyId": "",
+      "startDate": "2026-02-10T10:20:00.000Z",
+      "endedAt": null,
+      "closePnlShort": null,
+      "closePnlLong": null,
+      "closeNote": "",
+      "manualPrice": 0,
+      "useManualPrice": false,
+      "includeInStrategy": false,
+      "fundingShort": [
+        { "id": "dfs3a", "amount": 55, "date": "2026-03-01T12:00:00.000Z", "note": "Funding collected" }
+      ],
+      "fundingLong": [
+        { "id": "dfl3a", "amount": -18, "date": "2026-03-01T12:00:00.000Z", "note": "Funding paid" }
+      ]
+    },
+    {
+      "id": "demo_pos_4",
+      "type": "hedge",
+      "token": "ARB",
+      "tokenAmount": 3000,
+      "positionSizeUsd": 3900,
+      "entryPriceShort": 1.3,
+      "entryPriceLong": 1.28,
+      "shortExchangeId": "demo_ex_1",
+      "longExchangeId": "",
+      "longIsSpot": true,
+      "fees": 6,
+      "linkedStrategyId": "demo_strat_2",
+      "startDate": "2026-01-22T14:00:00.000Z",
+      "endedAt": null,
+      "closePnlShort": null,
+      "closePnlLong": null,
+      "closeNote": "",
+      "manualPrice": 0,
+      "useManualPrice": false,
+      "includeInStrategy": true,
+      "fundingShort": [
+        { "id": "dfs4a", "amount": 14, "date": "2026-02-15T12:00:00.000Z", "note": "Funding" }
+      ],
+      "fundingLong": []
     }
   ]
 }

@@ -13,6 +13,20 @@ const app = express();
 const PORT = process.env.PORT || 3002;
 const APP_URL = process.env.APP_URL || 'https://defivault.cloud';
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_do_not_use_in_prod';
+const APP_IS_HTTPS = (() => {
+  try {
+    return new URL(APP_URL).protocol === 'https:';
+  } catch {
+    return true;
+  }
+})();
+const SESSION_COOKIE = 'dv_session';
+const SESSION_COOKIE_OPTS = {
+  httpOnly: true,
+  sameSite: 'lax',
+  secure: APP_IS_HTTPS,
+  path: '/'
+};
 const VERIFY_RESEND_LIMIT_MS = 10000;
 const verifyResendCooldowns = new Map();
 const ACTIVITY_TOUCH_MS = 60000;
@@ -27,6 +41,7 @@ const SMTP_CONFIG = {
 
 app.use(express.json({ limit: '50mb' }));
 app.use(cookieParser());
+app.set('trust proxy', 1);
 app.use(express.static(path.join(__dirname, 'public')));
 
 db.initDB(); // Initialisiere Datenbanktabellen beim Start
@@ -65,7 +80,7 @@ async function sendMail(to, subject, html) {
 
 // Globale Auth-Prüfung
 app.use(async (req, res, next) => {
-  const token = req.cookies.dv_session;
+  const token = req.cookies[SESSION_COOKIE];
   if (!token) return next();
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
@@ -196,7 +211,7 @@ app.post('/api/auth/resend-verification', async (req, res) => {
 });
 
 app.post('/api/auth/login', async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, rememberMe } = req.body;
   const { rows } = await db.query('SELECT * FROM accounts WHERE LOWER(email) = LOWER($1)', [email]);
   if (rows.length === 0) return res.status(401).json({ error: 'Falsche E-Mail oder Passwort' });
   
@@ -214,12 +229,16 @@ app.post('/api/auth/login', async (req, res) => {
   touchPresence(acc.id);
 
   const token = jwt.sign({ accountId: acc.id }, JWT_SECRET, { expiresIn: '30d' });
-  res.cookie('dv_session', token, { maxAge: 30*24*60*60*1000, httpOnly: true, path: '/' });
+  const cookieOpts = rememberMe
+    ? { ...SESSION_COOKIE_OPTS, maxAge: 7 * 24 * 60 * 60 * 1000 }
+    : { ...SESSION_COOKIE_OPTS };
+  res.cookie(SESSION_COOKIE, token, cookieOpts);
   res.json({ ok: 1 });
 });
 
 app.post('/api/auth/logout', (req, res) => {
-  res.clearCookie('dv_session'); res.json({ ok: 1 });
+  res.clearCookie(SESSION_COOKIE, SESSION_COOKIE_OPTS);
+  res.json({ ok: 1 });
 });
 
 // ============================================
@@ -406,9 +425,11 @@ app.get('/api/demo-data', (req, res) => {
   try {
     const dataPath = path.join(__dirname, 'demo_data.json');
     const frfPath = path.join(__dirname, 'demo_frf.json');
+    const loopsPath = path.join(__dirname, 'demo_loops.json');
     
     let demoData = [];
     let demoFrf = { exchanges: [], positions: [] };
+    let demoLoops = [];
 
     if (fs.existsSync(dataPath)) {
       demoData = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
@@ -416,8 +437,11 @@ app.get('/api/demo-data', (req, res) => {
     if (fs.existsSync(frfPath)) {
       demoFrf = JSON.parse(fs.readFileSync(frfPath, 'utf8'));
     }
+    if (fs.existsSync(loopsPath)) {
+      demoLoops = JSON.parse(fs.readFileSync(loopsPath, 'utf8'));
+    }
 
-    res.json({ data: demoData, frf: demoFrf });
+    res.json({ data: demoData, frf: demoFrf, loops: demoLoops });
   } catch (error) {
     console.error("Fehler beim Laden der Demo-Daten:", error);
     res.status(500).json({ error: "Fehler beim Laden der Demo-Daten." });
@@ -608,6 +632,28 @@ router.put('/frf/positions/:id/close', async (req, res) => {
 });
 router.put('/frf/positions/:id/toggle-strategy', async (req, res) => { svU(req, 'Toggle Strat'); const p = req.profile.frf.positions.find(x => x.id === req.params.id); p.includeInStrategy = !p.includeInStrategy; await saveProfile(req); res.json(req.profile.frf); });
 router.post('/frf/positions/:id/funding/:side', async (req, res) => { svU(req, 'Fund+'); const p = req.profile.frf.positions.find(x => x.id === req.params.id); const arr = req.params.side === 'short' ? p.fundingShort : p.fundingLong; arr.push({id:gid(), amount:parseFloat(req.body.amount), date:new Date().toISOString(), note:req.body.note||''}); await saveProfile(req); res.json(req.profile.frf); });
+router.put('/frf/positions/:id/funding/:side/:fid', async (req, res) => {
+  svU(req, 'Fund~');
+  const p = req.profile.frf.positions.find(x => x.id === req.params.id);
+  if (!p) return res.status(404).json({ error: 'Position nicht gefunden' });
+  if (req.params.side !== 'short' && req.params.side !== 'long') return res.status(400).json({ error: 'Ungueltige Seite' });
+  const arr = req.params.side === 'short' ? p.fundingShort : p.fundingLong;
+  const f = arr.find(x => x.id === req.params.fid);
+  if (!f) return res.status(404).json({ error: 'Funding-Eintrag nicht gefunden' });
+  const amount = parseFloat(req.body.amount);
+  if (Number.isNaN(amount)) return res.status(400).json({ error: 'Ungueltiger Betrag' });
+  let dateIso = f.date || new Date().toISOString();
+  if (req.body.date) {
+    const d = new Date(req.body.date);
+    if (Number.isNaN(d.getTime())) return res.status(400).json({ error: 'Ungueltiges Datum' });
+    dateIso = d.toISOString();
+  }
+  f.amount = amount;
+  f.note = req.body.note || '';
+  f.date = dateIso;
+  await saveProfile(req);
+  res.json(req.profile.frf);
+});
 router.delete('/frf/positions/:id/funding/:side/:fid', async (req, res) => { svU(req, 'Fund-'); const p = req.profile.frf.positions.find(x => x.id === req.params.id); if(req.params.side==='short') p.fundingShort = p.fundingShort.filter(x=>x.id!==req.params.fid); else p.fundingLong = p.fundingLong.filter(x=>x.id!==req.params.fid); await saveProfile(req); res.json(req.profile.frf); });
 // ============================================
 // SUPPORT & COMMUNITY API
