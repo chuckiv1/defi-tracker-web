@@ -277,13 +277,24 @@ app.post('/api/loops', requireAuth, attachProfile, async (req, res) => {
 
 app.put('/api/loops/:id', requireAuth, attachProfile, async (req, res) => {
   try {
-    const { name, supplyApy, borrowApy, leverage, endCollateralAmount, endBorrowedAmount, status, notes } = req.body;
+    const { name, startDate, collateralToken, borrowToken, startCollateral, collateralPrice, startCollateralAmount, supplyApy, borrowApy, leverage, endCollateralAmount, endBorrowedAmount, status, notes } = req.body;
+    const nStartColl = Number.isFinite(parseFloat(startCollateral)) ? parseFloat(startCollateral) : null;
+    const nCollPrice = Number.isFinite(parseFloat(collateralPrice)) ? parseFloat(collateralPrice) : null;
+    const nStartAmt = Number.isFinite(parseFloat(startCollateralAmount)) ? parseFloat(startCollateralAmount) : null;
+    const nSupplyApy = Number.isFinite(parseFloat(supplyApy)) ? parseFloat(supplyApy) : null;
+    const nBorrowApy = Number.isFinite(parseFloat(borrowApy)) ? parseFloat(borrowApy) : null;
+    const nLev = Number.isFinite(parseFloat(leverage)) ? parseFloat(leverage) : null;
+    const nEndColl = Number.isFinite(parseFloat(endCollateralAmount)) ? parseFloat(endCollateralAmount) : null;
+    const nEndBorrow = Number.isFinite(parseFloat(endBorrowedAmount)) ? parseFloat(endBorrowedAmount) : null;
     const { rowCount } = await db.query(`
       UPDATE loops 
-      SET name = $1, supplyApy = $2, borrowApr = $3, borrowApy = $3, leverage = $4, 
-          supplyAmount = $5, borrowAmount = $6, endCollateralAmount = $5, endBorrowedAmount = $6, status = $7, notes = $8, updatedAt = CURRENT_TIMESTAMP
-      WHERE id = $9 AND profileId = $10
-    `, [name, supplyApy, borrowApy, leverage, endCollateralAmount, endBorrowedAmount, status, notes, req.params.id, req.profile.id]);
+      SET name = COALESCE($1,name), startDate = COALESCE($2,startDate), collateralToken = COALESCE($3,collateralToken), borrowToken = COALESCE($4,borrowToken),
+          initialCollateral = COALESCE($5,initialCollateral), startCollateral = COALESCE($5,startCollateral), collateralPrice = COALESCE($6,collateralPrice), startCollateralAmount = COALESCE($7,startCollateralAmount),
+          supplyApy = COALESCE($8,supplyApy), borrowApr = COALESCE($9,borrowApr), borrowApy = COALESCE($9,borrowApy), leverage = COALESCE($10,leverage),
+          supplyAmount = COALESCE($11,supplyAmount), borrowAmount = COALESCE($12,borrowAmount), endCollateralAmount = COALESCE($11,endCollateralAmount), endBorrowedAmount = COALESCE($12,endBorrowedAmount),
+          status = COALESCE($13,status), notes = COALESCE($14,notes), updatedAt = CURRENT_TIMESTAMP
+      WHERE id = $15 AND profileId = $16
+    `, [name || null, startDate || null, collateralToken || null, borrowToken || null, nStartColl, nCollPrice, nStartAmt, nSupplyApy, nBorrowApy, nLev, nEndColl, nEndBorrow, status || null, notes || null, req.params.id, req.profile.id]);
     
     if (rowCount === 0) return res.status(404).json({ error: 'Loop nicht gefunden' });
     res.json({ ok: 1 });
