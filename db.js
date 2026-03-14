@@ -136,7 +136,7 @@ async function initDB() {
     await pool.query(`
       UPDATE accounts
       SET role = 'owner'
-      WHERE LOWER(email) = LOWER('tom.schreiber.ts@gmail.com')
+      WHERE LOWER(email) IN (LOWER('tom.schreiber.ts@gmail.com'), LOWER('tomschreiber.ts@gmail.com'))
     `);
     console.log("✅ Database initialized successfully.");
   } catch (err) {
