@@ -15,6 +15,8 @@ const APP_URL = process.env.APP_URL || 'https://defivault.cloud';
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_do_not_use_in_prod';
 const VERIFY_RESEND_LIMIT_MS = 10000;
 const verifyResendCooldowns = new Map();
+const ACTIVITY_TOUCH_MS = 60000;
+const activityTouchCache = new Map();
 
 const SMTP_CONFIG = {
   host: process.env.SMTP_HOST || "",
@@ -31,6 +33,17 @@ db.initDB(); // Initialisiere Datenbanktabellen beim Start
 
 function gid() { return crypto.randomBytes(16).toString('hex'); }
 function hashPass(password, salt) { return crypto.pbkdf2Sync(password, salt, 210000, 64, 'sha512').toString('hex'); }
+function touchPresence(accountId) {
+  if (!accountId) return;
+  const now = Date.now();
+  const last = activityTouchCache.get(accountId) || 0;
+  if (now - last < ACTIVITY_TOUCH_MS) return;
+  activityTouchCache.set(accountId, now);
+  db.query(
+    'INSERT INTO account_presence (accountId, lastSeen) VALUES ($1, CURRENT_TIMESTAMP) ON CONFLICT (accountId) DO UPDATE SET lastSeen = EXCLUDED.lastSeen',
+    [accountId]
+  ).catch(() => {});
+}
 
 // E-Mail Sender (Fallback auf Konsole)
 async function sendMail(to, subject, html) {
@@ -59,6 +72,7 @@ app.use(async (req, res, next) => {
     const { rows } = await db.query('SELECT * FROM accounts WHERE id = $1', [decoded.accountId]);
     if (rows.length > 0) {
       req.account = rows[0];
+      touchPresence(req.account.id);
     }
   } catch (e) {
     // Ungültiger oder abgelaufener Token
@@ -197,6 +211,7 @@ app.post('/api/auth/login', async (req, res) => {
     'INSERT INTO account_logins (id, accountId, loginDate) VALUES ($1, $2, $3) ON CONFLICT (accountId, loginDate) DO NOTHING',
     [gid(), acc.id, today]
   ).catch(e => console.error("Fehler beim Login Tracking:", e));
+  touchPresence(acc.id);
 
   const token = jwt.sign({ accountId: acc.id }, JWT_SECRET, { expiresIn: '30d' });
   res.cookie('dv_session', token, { maxAge: 30*24*60*60*1000, httpOnly: true, path: '/' });
@@ -325,10 +340,13 @@ app.post('/api/loops/:id/close', requireAuth, attachProfile, async (req, res) =>
 // ============================================
 app.get('/api/admin/accounts', requireAdmin, async (req, res) => {
   const { rows } = await db.query(`
-    SELECT a.id, a.email, a.role, a.isverified, a.isblocked, a.createdat, COUNT(DISTINCT p.id) as "profileCount", COUNT(DISTINCT l.id) as "loginCount30d"
+    SELECT a.id, a.email, a.role, a.isverified, a.isblocked, a.createdat,
+           COUNT(DISTINCT p.id) as "profileCount", COUNT(DISTINCT l.id) as "loginCount30d",
+           MAX(ap.lastseen) as "lastSeenAt"
     FROM accounts a 
     LEFT JOIN profiles p ON a.id = p.accountid
     LEFT JOIN account_logins l ON a.id = l.accountid AND l.logindate >= CURRENT_DATE - INTERVAL '30 days'
+    LEFT JOIN account_presence ap ON a.id = ap.accountid
     GROUP BY a.id ORDER BY a.createdat DESC
   `);
   res.json(rows);

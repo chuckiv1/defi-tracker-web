@@ -35,6 +35,11 @@ async function initDB() {
         loginDate DATE NOT NULL,
         UNIQUE(accountId, loginDate)
       );
+
+      CREATE TABLE IF NOT EXISTS account_presence (
+        accountId VARCHAR(50) PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+        lastSeen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
       CREATE TABLE IF NOT EXISTS feature_requests (
         id VARCHAR(50) PRIMARY KEY,
         account_id VARCHAR(50) REFERENCES accounts(id) ON DELETE CASCADE,
