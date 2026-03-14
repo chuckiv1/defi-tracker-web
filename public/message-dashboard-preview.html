@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeFi Vault - Nachrichten Dashboard Preview</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:#0b0d11;color:#e0e4ec;font-family:'DM Sans',sans-serif}
+:root{--bg:#0d0f13;--bg2:#14161b;--bg3:#1a1d24;--bd:#1e2128;--bd2:#2a2e35;--t:#e0e4ec;--t2:#c0c4cc;--t3:#8a8f98;--t4:#5a5f68;--g:#00e5a0;--gb:rgba(0,229,160,.10);--r:#ff6b6b;--rb:rgba(255,107,107,.10);--y:#ffc44d;--yb:rgba(255,196,77,.10);--bl:#4da3ff;--blb:rgba(77,163,255,.10);--o:#ff8c42;--ob:rgba(255,140,66,.10);--p:#b48cff;--pb:rgba(180,140,255,.10)}
+body::before{content:"";position:fixed;inset:0;background:radial-gradient(circle at 20% 0%,rgba(0,229,160,.10),transparent 30%),radial-gradient(circle at 100% 20%,rgba(77,163,255,.12),transparent 35%),linear-gradient(180deg,#0b0d11,#0f1319 34%,#0b0d11);pointer-events:none}
+.shell{position:relative;max-width:1500px;margin:0 auto;padding:28px 20px 64px}
+.topbar{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px 18px;border:1px solid rgba(255,255,255,.05);border-radius:18px;background:rgba(17,20,26,.76);backdrop-filter:blur(18px);box-shadow:0 18px 60px rgba(0,0,0,.35)}
+.brand{display:flex;align-items:center;gap:12px}.logo{width:40px;height:40px;border-radius:12px;border:1px solid rgba(0,229,160,.25);display:grid;place-items:center;background:linear-gradient(135deg,rgba(0,229,160,.18),rgba(77,163,255,.10));box-shadow:inset 0 0 30px rgba(255,255,255,.03)}
+.logo svg{width:22px;height:22px}.title{font-size:18px;font-weight:700}.sub{font-size:11px;color:var(--t4);letter-spacing:.16em;text-transform:uppercase}
+.rightbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.navpill,.ghost,.solid,.danger{border:none;border-radius:12px;font-family:'DM Sans',sans-serif;font-weight:600;cursor:pointer}.navpill{background:var(--bg2);color:var(--t3);padding:9px 14px}.navpill.active{background:#20242d;color:#f2f5fa}.ghost{background:var(--bg2);border:1px solid var(--bd2);color:var(--t2);padding:9px 14px}.solid{background:linear-gradient(135deg,var(--g),#00c98b);color:#07110d;padding:10px 16px}.danger{background:var(--rb);color:var(--r);padding:10px 16px}
+.account{position:relative}.account-btn{display:flex;align-items:center;gap:10px;background:#101319;border:1px solid rgba(255,255,255,.05);padding:8px 12px;border-radius:14px;color:#f0f2f5;cursor:pointer}.avatar{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,var(--g),#0ca5ff);color:#07110d;font-weight:800}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.04em}.badge.info{background:var(--blb);color:var(--bl)}.badge.success{background:var(--gb);color:var(--g)}.badge.warn{background:var(--yb);color:var(--y)}.badge.alert{background:var(--rb);color:var(--r)}.badge.sys{background:var(--pb);color:var(--p)}.badge.orange{background:var(--ob);color:var(--o)}
+.menu{position:absolute;right:0;top:54px;width:280px;border:1px solid rgba(255,255,255,.06);border-radius:18px;background:rgba(18,22,28,.96);padding:10px;box-shadow:0 22px 60px rgba(0,0,0,.45)}
+.menu-head{padding:12px 14px 10px;border-bottom:1px solid rgba(255,255,255,.05)}.menu-head strong{display:block}.menu-head span{font-size:12px;color:var(--t4)}
+.menu-item{display:flex;justify-content:space-between;align-items:center;width:100%;padding:12px 14px;border-radius:12px;border:none;background:transparent;color:var(--t2);cursor:pointer;font-family:'DM Sans',sans-serif;font-size:14px}.menu-item:hover,.menu-item.active{background:#1a1f27;color:#f0f2f5}
+.menu-item small{color:var(--t4)}
+.hero{display:grid;grid-template-columns:1.3fr .9fr;gap:18px;margin-top:20px}.hero-card,.side-card,.panel,.compose,.preview-list,.analytics,.detail,.userlist{border:1px solid rgba(255,255,255,.05);background:linear-gradient(180deg,rgba(23,26,33,.95),rgba(16,19,25,.98));border-radius:24px;box-shadow:0 20px 60px rgba(0,0,0,.30)}
+.hero-card{padding:28px;position:relative;overflow:hidden}.hero-card::after{content:"";position:absolute;right:-60px;top:-40px;width:240px;height:240px;border-radius:50%;background:radial-gradient(circle,rgba(0,229,160,.16),transparent 65%)}
+.eyebrow{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--t4);margin-bottom:10px}.hero-card h1{margin:0 0 10px;font-size:38px;line-height:1.02;max-width:10ch}.hero-card p{margin:0;color:var(--t3);max-width:60ch;line-height:1.6}
+.hero-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:22px}.kpi{padding:14px 16px;border-radius:18px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.04)}.kpi label{display:block;font-size:10px;color:var(--t4);text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px}.kpi strong{font-size:24px;font-family:'JetBrains Mono',monospace}.kpi span{display:block;margin-top:4px;font-size:11px;color:var(--t4)}
+.side-card{padding:22px}.side-card h3{margin:0 0 12px;font-size:18px}.stack{display:flex;flex-direction:column;gap:12px}.mini{padding:14px;border-radius:18px;background:#11151b;border:1px solid rgba(255,255,255,.05)}.mini strong{display:block;font-size:14px}.mini span{display:block;margin-top:6px;color:var(--t3);font-size:13px;line-height:1.5}
+.section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:30px 0 14px}.section-head h2{margin:0;font-size:18px}.section-head p{margin:4px 0 0;color:var(--t4);font-size:13px}.toggle{display:flex;gap:4px;padding:4px;background:#12161c;border:1px solid rgba(255,255,255,.05);border-radius:14px}.toggle button{border:none;background:transparent;color:var(--t4);padding:9px 14px;border-radius:10px;cursor:pointer;font-weight:600}.toggle button.active{background:#232833;color:#f0f2f5}
+.workspace{display:grid;grid-template-columns:320px minmax(0,1fr) 360px;gap:16px;align-items:start}
+.preview-list,.detail,.compose,.analytics,.userlist{padding:16px}
+.panel-title{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px}.panel-title h3{margin:0;font-size:16px}.panel-title span{font-size:12px;color:var(--t4)}
+.search{display:flex;gap:8px;margin-bottom:12px}.search input,.search select,.compose input,.compose textarea{width:100%;background:#10141a;border:1px solid var(--bd2);border-radius:14px;color:var(--t);padding:12px 14px;font-family:'JetBrains Mono',monospace;font-size:13px;outline:none}.compose textarea{min-height:130px;resize:vertical}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.chip{padding:7px 10px;border-radius:999px;background:#10141a;border:1px solid rgba(255,255,255,.05);font-size:11px;color:var(--t3)}.chip.active{background:var(--gb);border-color:rgba(0,229,160,.18);color:var(--g)}
+.msg{padding:14px;border-radius:18px;border:1px solid rgba(255,255,255,.04);background:#11151b;cursor:pointer;transition:transform .16s ease,border-color .16s ease}.msg:hover{transform:translateY(-1px);border-color:rgba(77,163,255,.28)}.msg.active{background:linear-gradient(180deg,rgba(77,163,255,.10),rgba(17,21,27,.96));border-color:rgba(77,163,255,.28)}.msg + .msg{margin-top:10px}
+.msg-top,.row{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.msg strong{font-size:14px}.msg p{margin:8px 0 0;color:var(--t3);font-size:13px;line-height:1.5}.meta{font-size:11px;color:var(--t4)}.dot{width:8px;height:8px;border-radius:50%;background:var(--g);display:inline-block;margin-right:6px;box-shadow:0 0 0 4px rgba(0,229,160,.08)}
+.detail-header{padding-bottom:14px;border-bottom:1px solid rgba(255,255,255,.05);margin-bottom:14px}.detail-header h3{margin:10px 0 6px;font-size:28px}.detail-header p{margin:0;color:var(--t3);line-height:1.7;font-size:15px}.detail-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}.info-card{padding:14px;border-radius:18px;background:#11151b;border:1px solid rgba(255,255,255,.04)}.info-card label{display:block;font-size:10px;color:var(--t4);text-transform:uppercase;letter-spacing:.1em}.info-card strong{display:block;margin-top:8px;font-family:'JetBrains Mono',monospace;font-size:15px}
+.timeline{display:flex;flex-direction:column;gap:10px;margin-top:14px}.timeline .mini-line{padding:12px 14px;border-radius:14px;background:#10141a;border:1px solid rgba(255,255,255,.04)}.timeline .mini-line strong{font-size:13px}.timeline .mini-line span{display:block;margin-top:5px;color:var(--t4);font-size:12px}
+.compose .seg{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}.seg button{padding:11px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.05);background:#10141a;color:var(--t3);cursor:pointer;font-weight:700}.seg button.active{background:var(--gb);color:var(--g);border-color:rgba(0,229,160,.15)}
+.compose-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.checkrow{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}.check{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:12px;background:#10141a;border:1px solid rgba(255,255,255,.04);font-size:12px;color:var(--t2)}
+.compose-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.compose-note{margin-top:12px;padding:12px 14px;border-radius:16px;background:rgba(77,163,255,.08);color:#cfe4ff;font-size:13px;line-height:1.5;border:1px solid rgba(77,163,255,.18)}
+.analytics{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.stat{padding:16px;border-radius:18px;background:#11151b;border:1px solid rgba(255,255,255,.04)}.stat label{display:block;font-size:10px;color:var(--t4);text-transform:uppercase;letter-spacing:.1em}.stat strong{display:block;margin-top:10px;font-size:24px;font-family:'JetBrains Mono',monospace}.stat span{display:block;margin-top:6px;color:var(--t4);font-size:12px}
+.userlist .user{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;border-top:1px solid rgba(255,255,255,.04)}.userlist .user:first-of-type{border-top:none}.user-meta strong{display:block}.user-meta span{display:block;margin-top:4px;color:var(--t4);font-size:12px}.user-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.footer-note{margin-top:18px;padding:16px 18px;border-radius:20px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01));border:1px solid rgba(255,255,255,.05);color:var(--t3);line-height:1.6}
+.hidden{display:none}
+@media (max-width:1180px){.hero{grid-template-columns:1fr}.workspace{grid-template-columns:1fr}.analytics{grid-template-columns:repeat(4,1fr)}.userlist{order:3}.compose{order:2}.preview-list{order:1}.detail{order:2}}
+@media (max-width:860px){.kpis,.detail-grid,.compose-grid,.analytics{grid-template-columns:repeat(2,1fr)}.menu{position:static;width:auto;margin-top:12px}}
+@media (max-width:620px){.shell{padding:16px 12px 40px}.topbar{padding:12px}.hero-card h1{font-size:30px}.kpis,.detail-grid,.compose-grid,.analytics,.compose .seg{grid-template-columns:1fr}.section-head{align-items:flex-start;flex-direction:column}.rightbar{justify-content:flex-end;width:100%}}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="topbar">
+    <div class="brand">
+      <div class="logo">
+        <svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="3" width="22" height="22" rx="6" stroke="#00e5a0" stroke-width="1.6"/><path d="M8 18L12 11L16 15L20 8" stroke="#00e5a0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div>
+        <div class="title">DeFi Vault</div>
+        <div class="sub">Message Center Concept</div>
+      </div>
+    </div>
+    <div class="rightbar">
+      <button class="navpill">Aktiv</button>
+      <button class="navpill">FRF</button>
+      <button class="navpill">Looping</button>
+      <div class="account">
+        <button class="account-btn" type="button">
+          <span class="badge alert">3 neu</span>
+          <div class="avatar">TS</div>
+          <span>Toms Wallet</span>
+        </button>
+        <div class="menu">
+          <div class="menu-head">
+            <strong>tom.schreiberts@gmail.com</strong>
+            <span>Profil: Main Wallet</span>
+          </div>
+          <button class="menu-item"><span>Profil wechseln</span><small>1 aktiv</small></button>
+          <button class="menu-item active"><span>Nachrichten Dashboard</span><small>3 ungelesen</small></button>
+          <button class="menu-item"><span>Support & Community</span><small>2 Antworten</small></button>
+          <button class="menu-item"><span>Logout</span><small>Session</small></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="hero">
+    <div class="hero-card">
+      <div class="eyebrow">Inbox + Broadcast + Direktnachrichten</div>
+      <h1>Nachrichten werden ein eigener Arbeitsbereich.</h1>
+      <p>Die UI trennt klar zwischen User-Inbox und Admin-Kommunikation. Ein User sieht wichtige Systemmeldungen, persönliche Antworten und Wartungsinfos. Ein Admin kann Broadcasts, Segment-Nachrichten und Direktnachrichten mit Lesestatus, Priorität, Pinning und Ablaufdatum verwalten.</p>
+      <div class="hero-actions">
+        <button class="solid">Admin Broadcast senden</button>
+        <button class="ghost">Direkt an User verfassen</button>
+        <button class="ghost">Inbox-Ansicht testen</button>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><label>Inbox Ungelesen</label><strong>3</strong><span>2 wichtig, 1 Antwort</span></div>
+        <div class="kpi"><label>Broadcast Reichweite</label><strong>74</strong><span>Aktive User als Empfänger</span></div>
+        <div class="kpi"><label>Read Rate</label><strong>82%</strong><span>bei letzter Wartungsmeldung</span></div>
+        <div class="kpi"><label>Geplante Nachrichten</label><strong>2</strong><span>1 Entwurf, 1 geplant</span></div>
+      </div>
+    </div>
+    <div class="side-card">
+      <h3>Gedachte Kernfunktionen</h3>
+      <div class="stack">
+        <div class="mini"><span class="badge success">User</span><strong>Unread Badge + Inbox</strong><span>Im Account-Menü sofort sichtbar. Nachrichten lassen sich filtern, als gelesen markieren oder gesammelt abhaken.</span></div>
+        <div class="mini"><span class="badge info">Admin</span><strong>Broadcast, User, Segmente</strong><span>An alle, an einzelne User oder an Zielgruppen wie aktive User, neue Accounts oder nur ungeblockte Nutzer.</span></div>
+        <div class="mini"><span class="badge warn">Wichtig</span><strong>Pinning + Ablaufdatum</strong><span>Wartungsfenster und Security-Hinweise bleiben oben, verschwinden aber nach Ablauf automatisch.</span></div>
+        <div class="mini"><span class="badge sys">Analyse</span><strong>Read Tracking</strong><span>Admin sieht, wer gelesen hat, wie viele offen sind und welche Nachrichten Aufmerksamkeit brauchen.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-head">
+    <div>
+      <h2>Interaktiver UI-Entwurf</h2>
+      <p>Oben kannst du zwischen User- und Admin-Sicht wechseln. Der HTML-Entwurf ist statisch, aber die States sind klickbar.</p>
+    </div>
+    <div class="toggle">
+      <button class="active" data-view-btn="user">User Inbox</button>
+      <button data-view-btn="admin">Admin Dashboard</button>
+    </div>
+  </div>
+
+  <section data-view="user">
+    <div class="workspace">
+      <aside class="preview-list">
+        <div class="panel-title"><h3>Inbox</h3><span>3 ungelesen</span></div>
+        <div class="search"><input value="system, support, wartung" aria-label="Suche"></div>
+        <div class="filters">
+          <span class="chip active">Alle</span>
+          <span class="chip">Ungelesen</span>
+          <span class="chip">Angeheftet</span>
+          <span class="chip">Antworten</span>
+        </div>
+        <div class="msg active">
+          <div class="msg-top"><strong><span class="dot"></span>Wartung heute 22:00</strong><span class="badge alert">Dringend</span></div>
+          <p>Kurzes Deploy-Fenster mit möglichem Reconnect bei FRF-Preisen. Nachricht ist angeheftet und läuft morgen automatisch ab.</p>
+          <div class="row"><span class="meta">Von Admin • vor 18 Min.</span><span class="badge warn">Pinned</span></div>
+        </div>
+        <div class="msg">
+          <div class="msg-top"><strong>Antwort auf Support-Anfrage</strong><span class="badge info">Direkt</span></div>
+          <p>Dein Funding-Edit-Bug wurde behoben und live ausgerollt. Bitte kurz prüfen.</p>
+          <div class="row"><span class="meta">Von Admin • heute 14:22</span><span class="badge success">Neu</span></div>
+        </div>
+        <div class="msg">
+          <div class="msg-top"><strong>Neues Feature live: Message Center</strong><span class="badge sys">System</span></div>
+          <p>Ab sofort findest du wichtige Releases, Sicherheitsinfos und persönliche Antworten im neuen Dashboard.</p>
+          <div class="row"><span class="meta">Broadcast • gestern</span><span class="badge orange">Info</span></div>
+        </div>
+      </aside>
+
+      <main class="detail">
+        <div class="detail-header">
+          <div class="row">
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <span class="badge alert">Dringend</span>
+              <span class="badge warn">Angeheftet</span>
+              <span class="badge sys">System</span>
+            </div>
+            <span class="meta">Empfangen: heute, 20:14</span>
+          </div>
+          <h3>Wartung heute 22:00 - kurzer Neustart des App-Containers</h3>
+          <p>Zwischen 22:00 und 22:05 Uhr wird die Anwendung einmal neu gestartet. Deine Daten bleiben erhalten. Währenddessen kann es sein, dass du die Seite neu laden musst. Falls du gerade im FRF-Bereich arbeitest, speichere bitte offene Änderungen kurz vorher.</p>
+        </div>
+        <div class="detail-grid">
+          <div class="info-card"><label>Zielgruppe</label><strong>Alle aktiven User</strong></div>
+          <div class="info-card"><label>Lesestatus</label><strong>61 / 74 gelesen</strong></div>
+          <div class="info-card"><label>Läuft ab</label><strong>morgen 08:00</strong></div>
+        </div>
+        <div class="timeline">
+          <div class="mini-line"><strong>Systemhinweis</strong><span>Wenn die Verbindung getrennt wird, reicht ein Reload der Seite. Kein manueller Login-Reset nötig.</span></div>
+          <div class="mini-line"><strong>Verlinkung möglich</strong><span>Optional könnte hier ein direkter Button zu einer Status-Seite, Changelog oder Support-Konversation sitzen.</span></div>
+          <div class="mini-line"><strong>User-Aktionen</strong><span>Buttons im finalen Flow: <b>Als gelesen markieren</b>, <b>Alle als gelesen</b>, <b>Antworten</b> bei Direktnachrichten.</span></div>
+        </div>
+      </main>
+
+      <aside>
+        <div class="analytics" style="margin-bottom:16px">
+          <div class="stat"><label>Ungelesen</label><strong>3</strong><span>davon 2 wichtig</span></div>
+          <div class="stat"><label>Antworten offen</label><strong>1</strong><span>Support wartet auf Bestätigung</span></div>
+          <div class="stat"><label>Letzte Admin-Nachricht</label><strong>18m</strong><span>Broadcast mit Wartungshinweis</span></div>
+          <div class="stat"><label>Archiv</label><strong>24</strong><span>ältere Nachrichten</span></div>
+        </div>
+        <div class="userlist">
+          <div class="panel-title"><h3>Inbox Komfort</h3><span>User-Aktionen</span></div>
+          <div class="stack">
+            <div class="mini"><strong>Mark all as read</strong><span>Schneller Sammel-Button im Header oder als Sticky Action für mobile.</span></div>
+            <div class="mini"><strong>Filter + Suche</strong><span>Nur ungelesene, nur wichtig, nur Direktnachrichten, nur Systemmeldungen.</span></div>
+            <div class="mini"><strong>Conversation View</strong><span>Direktnachrichten können als Verlauf dargestellt werden, statt nur als Einzelnachricht.</span></div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <section data-view="admin" class="hidden">
+    <div class="workspace">
+      <aside class="compose">
+        <div class="panel-title"><h3>Neue Nachricht</h3><span>Entwurf #07</span></div>
+        <div class="seg">
+          <button class="active">An alle</button>
+          <button>An User</button>
+          <button>An Segment</button>
+        </div>
+        <div class="compose-grid">
+          <input value="Wartung heute 22:00" aria-label="Betreff">
+          <select aria-label="Prioritaet">
+            <option>Dringend</option>
+            <option>Wichtig</option>
+            <option>Info</option>
+          </select>
+          <select aria-label="Typ">
+            <option>System</option>
+            <option>Wartung</option>
+            <option>Sicherheit</option>
+            <option>Support</option>
+          </select>
+          <input value="2026-03-15 08:00" aria-label="Ablaufdatum">
+        </div>
+        <textarea aria-label="Nachricht">Zwischen 22:00 und 22:05 Uhr wird die App neu gestartet. Bitte offene Eingaben vorher speichern. Nach dem Deploy reicht in der Regel ein Reload.</textarea>
+        <div class="checkrow">
+          <div class="check"><input type="checkbox" checked> Anheften</div>
+          <div class="check"><input type="checkbox" checked> Lesestatus tracken</div>
+          <div class="check"><input type="checkbox"> Push an E-Mail spiegeln</div>
+        </div>
+        <div class="compose-note">Zusatzidee im finalen Flow: <b>Entwurf speichern</b>, <b>Sendevorschau</b>, <b>Später planen</b> und <b>Nachricht zurückziehen</b>, solange sie noch nicht gelesen wurde.</div>
+        <div class="compose-actions">
+          <button class="solid">Jetzt senden</button>
+          <button class="ghost">Als Entwurf sichern</button>
+          <button class="ghost">Sendevorschau</button>
+        </div>
+      </aside>
+
+      <main>
+        <div class="analytics" style="margin-bottom:16px">
+          <div class="stat"><label>Broadcasts gesendet</label><strong>12</strong><span>letzte 30 Tage</span></div>
+          <div class="stat"><label>Read Rate</label><strong>82%</strong><span>letzter Broadcast</span></div>
+          <div class="stat"><label>Direktnachrichten</label><strong>9</strong><span>davon 4 mit Antwort</span></div>
+          <div class="stat"><label>Offene Support-Fälle</label><strong>3</strong><span>1 priorisiert</span></div>
+        </div>
+
+        <div class="detail" style="padding:18px 18px 6px">
+          <div class="panel-title"><h3>Versandhistorie</h3><span>Read Analytics + Verlauf</span></div>
+          <div class="msg active">
+            <div class="msg-top"><strong>Wartung heute 22:00</strong><span class="badge alert">Broadcast</span></div>
+            <p>Empfänger: alle aktiven User. Angeheftet bis morgen 08:00. Im finalen Dashboard klickbar mit Detailansicht der Read Events.</p>
+            <div class="row"><span class="meta">Gesendet von Admin Lena • heute 20:14</span><span class="badge success">61 gelesen</span></div>
+          </div>
+          <div class="msg">
+            <div class="msg-top"><strong>Antwort an tom.schreiberts@gmail.com</strong><span class="badge info">Direkt</span></div>
+            <p>Funding-Edit-Bug bestätigt und gelöst. Hier wäre im finalen Produkt eine echte Konversation mit Antwortverlauf.</p>
+            <div class="row"><span class="meta">heute 14:22</span><span class="badge warn">Wartet auf Antwort</span></div>
+          </div>
+          <div class="msg">
+            <div class="msg-top"><strong>Neue Feature-Roadmap</strong><span class="badge sys">Broadcast</span></div>
+            <p>Release-Zusammenfassung der Woche inklusive Changelog-Link und Hinweis auf neue Looping-Verbesserungen.</p>
+            <div class="row"><span class="meta">gestern 10:05</span><span class="badge orange">52 gelesen</span></div>
+          </div>
+        </div>
+      </main>
+
+      <aside class="userlist">
+        <div class="panel-title"><h3>Userliste</h3><span>Quick Actions</span></div>
+        <div class="search">
+          <input value="tom, aktiver user, zuletzt online" aria-label="User Suche">
+        </div>
+        <div class="user">
+          <div class="user-meta"><strong>tom.schreiberts@gmail.com</strong><span>Online • 3 ungelesene • letzter Login heute</span></div>
+          <div class="user-actions"><button class="ghost">Details</button><button class="solid">Nachricht</button></div>
+        </div>
+        <div class="user">
+          <div class="user-meta"><strong>anna@walletmail.com</strong><span>Idle • 1 ungelesen • Antwortet häufig</span></div>
+          <div class="user-actions"><button class="ghost">Details</button><button class="solid">Nachricht</button></div>
+        </div>
+        <div class="user">
+          <div class="user-meta"><strong>mike@farm.de</strong><span>Offline • 0 ungelesen • Blockiert: nein</span></div>
+          <div class="user-actions"><button class="ghost">Details</button><button class="solid">Nachricht</button></div>
+        </div>
+        <div class="user">
+          <div class="user-meta"><strong>sara@yield.com</strong><span>Online • 2 ungelesen • Looping heavy user</span></div>
+          <div class="user-actions"><button class="ghost">Details</button><button class="solid">Nachricht</button></div>
+        </div>
+        <div class="footer-note">
+          In der finalen Version sind hier zusätzlich sinnvoll: <b>nach Segment filtern</b>, <b>nur ungelesene User anzeigen</b>, <b>nur neue Accounts</b>, <b>nur aktive Nutzer</b> und ein schneller Einstieg in Direktnachrichten direkt aus der Admin-Userliste.
+        </div>
+      </aside>
+    </div>
+  </section>
+</div>
+
+<script>
+document.querySelectorAll('[data-view-btn]').forEach(function(btn){
+  btn.addEventListener('click', function(){
+    var target = btn.getAttribute('data-view-btn');
+    document.querySelectorAll('[data-view-btn]').forEach(function(x){ x.classList.toggle('active', x === btn); });
+    document.querySelectorAll('[data-view]').forEach(function(view){
+      view.classList.toggle('hidden', view.getAttribute('data-view') !== target);
+    });
+  });
+});
+</script>
+</body>
+</html>

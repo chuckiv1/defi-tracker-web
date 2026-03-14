@@ -93,6 +93,45 @@ async function initDB() {
         note TEXT,
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS messages (
+        id VARCHAR(50) PRIMARY KEY,
+        senderAccountId VARCHAR(50) REFERENCES accounts(id) ON DELETE CASCADE,
+        conversationId VARCHAR(50),
+        parentMessageId VARCHAR(50) REFERENCES messages(id) ON DELETE SET NULL,
+        targetType VARCHAR(20) NOT NULL DEFAULT 'direct',
+        targetAccountId VARCHAR(50) REFERENCES accounts(id) ON DELETE SET NULL,
+        audiencePreset VARCHAR(50),
+        title VARCHAR(255) NOT NULL,
+        body TEXT NOT NULL,
+        priority VARCHAR(20) NOT NULL DEFAULT 'info',
+        category VARCHAR(30) NOT NULL DEFAULT 'system',
+        linkUrl TEXT,
+        isPinned BOOLEAN DEFAULT false,
+        expiresAt TIMESTAMP,
+        status VARCHAR(20) NOT NULL DEFAULT 'draft',
+        scheduledAt TIMESTAMP,
+        sentAt TIMESTAMP,
+        withdrawnAt TIMESTAMP,
+        readTracking BOOLEAN DEFAULT true,
+        emailMirror BOOLEAN DEFAULT false,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS message_recipients (
+        messageId VARCHAR(50) REFERENCES messages(id) ON DELETE CASCADE,
+        accountId VARCHAR(50) REFERENCES accounts(id) ON DELETE CASCADE,
+        readAt TIMESTAMP,
+        archived BOOLEAN DEFAULT false,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (messageId, accountId)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(senderAccountId, createdAt DESC);
+      CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status, scheduledAt, sentAt);
+      CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversationId, createdAt ASC);
+      CREATE INDEX IF NOT EXISTS idx_message_recipients_account ON message_recipients(accountId, readAt);
     `);
     console.log("✅ Database initialized successfully.");
   } catch (err) {
