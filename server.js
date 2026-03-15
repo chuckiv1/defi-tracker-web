@@ -405,7 +405,7 @@ async function getVariationalCandidates() {
   const set = new Set();
   [...extended, ...hyperliquid, ...bybitSpot, ...bybitPerp, ...phemexSpot, ...phemexPerp].forEach(row => { if (row && row.symbol) set.add(String(row.symbol).toUpperCase()); });
   ['BTC', 'ETH', 'SOL', 'AVAX', 'ARB', 'DOGE', 'XRP', 'SUI', 'BNB', 'HYPE', 'LTC', 'VVV', 'GOAT', '4'].forEach(symbol => set.add(symbol));
-  return cacheSet('variational_candidates', [...set].filter(symbol => /^[A-Z0-9._-]{2,20}$/.test(symbol)).sort(), VARIATIONAL_DISCOVERY_TTL_MS);
+  return cacheSet('variational_candidates', [...set].filter(symbol => /^[A-Z0-9._-]{1,20}$/.test(symbol)).sort(), VARIATIONAL_DISCOVERY_TTL_MS);
 }
 function probeVariationalBatch(symbols) {
   return new Promise((resolve, reject) => {
