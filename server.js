@@ -41,7 +41,12 @@ const activityTouchCache = new Map();
 const EXCHANGE_CACHE_MS = 5 * 60 * 1000;
 const VARIATIONAL_DISCOVERY_TTL_MS = 12 * 60 * 60 * 1000;
 const VARIATIONAL_BATCH_SIZE = 120;
+const FUNDING_LOOKBACK_MS = 72 * 60 * 60 * 1000;
+const EIGHT_HOURS_MS = 8 * 60 * 60 * 1000;
+const VARIATIONAL_FUNDING_CAPTURE_MS = 5 * 60 * 1000;
 const exchangeLookupCache = new Map();
+const variationalFundingSnapshotDir = path.join(__dirname, '.runtime');
+const variationalFundingSnapshotFile = path.join(variationalFundingSnapshotDir, 'variational-funding-snapshots.json');
 const MESSAGE_SEGMENTS = new Set(['all_users', 'active_7d', 'active_30d', 'new_14d', 'verified_users', 'admins']);
 const ROLE_ORDER = ['user', 'support', 'admin', 'owner'];
 
@@ -168,6 +173,84 @@ function uniqueBy(items, keyFn) {
     seen.set(key, item);
   });
   return [...seen.values()];
+}
+function ensureRuntimeDir() {
+  try {
+    if (!fs.existsSync(variationalFundingSnapshotDir)) fs.mkdirSync(variationalFundingSnapshotDir, { recursive: true });
+  } catch (error) {}
+}
+function readVariationalFundingSnapshots() {
+  try {
+    if (!fs.existsSync(variationalFundingSnapshotFile)) return [];
+    const parsed = JSON.parse(fs.readFileSync(variationalFundingSnapshotFile, 'utf8'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    return [];
+  }
+}
+function writeVariationalFundingSnapshots(items) {
+  try {
+    ensureRuntimeDir();
+    fs.writeFileSync(variationalFundingSnapshotFile, JSON.stringify(items, null, 2));
+  } catch (error) {}
+}
+function normalizeFundingEntry(time, rate, intervalSeconds, extra = {}) {
+  const ts = parseFloat(time) || 0;
+  const fundingRate = parseFloat(rate);
+  const interval = parseFloat(intervalSeconds) || 0;
+  if (!(ts > 0) || !Number.isFinite(fundingRate) || !(interval > 0)) return null;
+  return {
+    time: Math.round(ts),
+    fundingRate,
+    intervalSeconds: interval,
+    rate8h: fundingRate * (EIGHT_HOURS_MS / 1000) / interval,
+    ...extra
+  };
+}
+function buildFundingPayload(provider, exchangeName, market, symbol, currentRate, intervalSeconds, settledEntries, extra = {}) {
+  const interval = parseFloat(intervalSeconds) || 0;
+  const rows = (Array.isArray(settledEntries) ? settledEntries : []).map(entry => normalizeFundingEntry(entry.time, entry.fundingRate, entry.intervalSeconds || interval, entry.extra || {})).filter(Boolean).filter(entry => entry.time >= Date.now() - FUNDING_LOOKBACK_MS).sort((a, b) => b.time - a.time);
+  const avgRate8h = rows.length ? rows.reduce((sum, entry) => sum + entry.rate8h, 0) / rows.length : null;
+  return {
+    provider,
+    exchangeName,
+    market,
+    symbol,
+    currentRate: Number.isFinite(parseFloat(currentRate)) ? parseFloat(currentRate) : null,
+    intervalSeconds: interval || null,
+    averageRate8h: Number.isFinite(avgRate8h) ? avgRate8h : null,
+    settledRates72h8h: rows,
+    ...extra
+  };
+}
+function variationalSettlementTime(nowMs, intervalSeconds) {
+  const intervalMs = (parseFloat(intervalSeconds) || 0) * 1000;
+  if (!(intervalMs > 0)) return 0;
+  return Math.ceil(nowMs / intervalMs) * intervalMs;
+}
+function storeVariationalFundingSnapshot(symbol, fundingRate, intervalSeconds, capturedAtMs) {
+  const normalizedSymbol = normalizeLookupSymbol(symbol, 20);
+  const interval = parseFloat(intervalSeconds) || 0;
+  const rate = parseFloat(fundingRate);
+  const capturedAt = parseFloat(capturedAtMs) || Date.now();
+  if (!normalizedSymbol || !(interval > 0) || !Number.isFinite(rate)) return;
+  const settlementTime = variationalSettlementTime(capturedAt, interval);
+  if (!(settlementTime > 0)) return;
+  const rows = readVariationalFundingSnapshots().filter(item => item && item.symbol && item.settlementTime && item.settlementTime >= Date.now() - FUNDING_LOOKBACK_MS - EIGHT_HOURS_MS);
+  const existing = rows.find(item => item.symbol === normalizedSymbol && item.settlementTime === settlementTime);
+  if (existing) {
+    existing.fundingRate = rate;
+    existing.intervalSeconds = interval;
+    existing.capturedAt = capturedAt;
+  } else {
+    rows.push({ symbol: normalizedSymbol, fundingRate: rate, intervalSeconds: interval, settlementTime, capturedAt });
+  }
+  writeVariationalFundingSnapshots(rows.sort((a, b) => a.settlementTime - b.settlementTime));
+}
+function getVariationalSettlementEntries(symbol) {
+  const normalizedSymbol = normalizeLookupSymbol(symbol, 20);
+  const now = Date.now();
+  return readVariationalFundingSnapshots().filter(item => item && item.symbol === normalizedSymbol && item.settlementTime <= now && item.settlementTime >= now - FUNDING_LOOKBACK_MS).map(item => ({ time: item.settlementTime, fundingRate: item.fundingRate, intervalSeconds: item.intervalSeconds }));
 }
 function wsListen(socket, event, handler) {
   if (socket && typeof socket.addEventListener === 'function') {
@@ -301,6 +384,7 @@ async function getBybitPerpMarkets() {
     symbol: String(row.baseCoin || '').toUpperCase(),
     market: String(row.symbol || '').toUpperCase(),
     quote: String(row.quoteCoin || '').toUpperCase(),
+    intervalSeconds: parseFloat(row.fundingInterval) ? parseFloat(row.fundingInterval) * 60 : 8 * 3600,
     label: `${String(row.baseCoin || '').toUpperCase()} perpetual ${String(row.quoteCoin || '').toUpperCase()}`
   }));
   return cacheSet('bybit_perp_markets', items);
@@ -328,12 +412,16 @@ async function getPhemexPerpMarkets() {
     symbol: String(row.baseCurrency || '').toUpperCase(),
     market: String(row.symbol || '').toUpperCase(),
     quote: String(row.quoteCurrency || '').toUpperCase(),
+    intervalSeconds: parseFloat(row.fundingInterval) || 28800,
+    fundingHistorySymbol: String(row.fundingRate8hSymbol || row.fundingRateSymbol || '').trim(),
     label: `${String(row.baseCurrency || '').toUpperCase()} perpetual ${String(row.quoteCurrency || '').toUpperCase()}`
   }));
   const legacyItems = rowsLegacy.filter(row => row && String(row.type || '') === 'Perpetual' && String(row.status || '') === 'Listed' && ['USD'].includes(String(row.quoteCurrency || '').toUpperCase())).map(row => ({
     symbol: String(String(row.displaySymbol || row.symbol || '').replace(/\s*\/.*$/, '') || '').replace(/^c/, '').toUpperCase(),
     market: String(row.symbol || '').toUpperCase(),
     quote: String(row.quoteCurrency || '').toUpperCase(),
+    intervalSeconds: parseFloat(row.fundingInterval) || 28800,
+    fundingHistorySymbol: String(row.fundingRate8hSymbol || row.fundingRateSymbol || '').trim(),
     label: `${String(String(row.displaySymbol || row.symbol || '').replace(/\s+/g, ' ').trim() || row.symbol || '').replace(/^c/, '')} perpetual`
   })).filter(item => item.symbol && item.market);
   return cacheSet('phemex_perp_markets', uniqueBy([...v2Items, ...legacyItems], row => row.market));
@@ -368,6 +456,124 @@ async function getPhemexQuote(token, mode, exchangeName) {
   const bid = mode === 'spot' ? (parseFloat(row.bidEp) || 0) / 1e8 : 0;
   const ask = mode === 'spot' ? (parseFloat(row.askEp) || 0) / 1e8 : 0;
   return buildQuotePayload('phemex', exchangeName, market.market, market.symbol, price, reference, bid, ask, mode, mode === 'spot' ? 'Phemex spot ticker' : 'Phemex perp ticker');
+}
+async function getBybitFunding(token, exchangeName) {
+  const market = await resolveBybitMarket(token, 'perp');
+  const [tickerPayload, historyPayload] = await Promise.all([
+    fetchJson(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${encodeURIComponent(market.market)}`),
+    fetchJson(`https://api.bybit.com/v5/market/funding/history?category=linear&symbol=${encodeURIComponent(market.market)}&limit=30`)
+  ]);
+  const ticker = tickerPayload && tickerPayload.result && Array.isArray(tickerPayload.result.list) ? tickerPayload.result.list[0] : null;
+  const intervalSeconds = market.intervalSeconds || ((parseFloat(ticker && ticker.fundingIntervalHour) || 8) * 3600);
+  const settled = ((historyPayload && historyPayload.result && Array.isArray(historyPayload.result.list)) ? historyPayload.result.list : []).map(item => ({
+    time: parseFloat(item.fundingRateTimestamp) || 0,
+    fundingRate: parseFloat(item.fundingRate),
+    intervalSeconds
+  }));
+  return buildFundingPayload('bybit', exchangeName, market.market, market.symbol, ticker ? ticker.fundingRate : null, intervalSeconds, settled, { nextFundingTime: ticker ? parseFloat(ticker.nextFundingTime) || 0 : 0 });
+}
+async function getPhemexFunding(token, exchangeName) {
+  const market = await resolvePhemexMarket(token, 'perp');
+  const historySymbol = market.fundingHistorySymbol || `.${market.market}FR8H`;
+  const [tickerPayload, historyPayload] = await Promise.all([
+    fetchJson(`https://api.phemex.com/md/v3/ticker/24hr?symbol=${encodeURIComponent(market.market)}`),
+    fetchJson(`https://api.phemex.com/api-data/public/data/funding-rate-history?symbol=${encodeURIComponent(historySymbol)}&limit=30`)
+  ]);
+  const ticker = tickerPayload && tickerPayload.result ? tickerPayload.result : null;
+  const settled = (((historyPayload && historyPayload.data && Array.isArray(historyPayload.data.rows)) ? historyPayload.data.rows : [])).map(item => ({
+    time: parseFloat(item.fundingTime) || 0,
+    fundingRate: parseFloat(item.fundingRate),
+    intervalSeconds: parseFloat(item.intervalSeconds) || market.intervalSeconds || 28800
+  }));
+  return buildFundingPayload('phemex', exchangeName, market.market, market.symbol, ticker ? ticker.fundingRateRr : null, market.intervalSeconds || 28800, settled, { predictedRate: ticker ? parseFloat(ticker.predFundingRateRr) : null });
+}
+async function getHyperliquidFunding(token, exchangeName) {
+  const normalized = normalizeLookupSymbol(token, 20);
+  if (!normalized) throw new Error('Ungueltiges Hyperliquid-Symbol');
+  const [currentPayload, historyPayload] = await Promise.all([
+    fetchJson('https://api.hyperliquid.xyz/info', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'metaAndAssetCtxs' }) }),
+    fetchJson('https://api.hyperliquid.xyz/info', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'fundingHistory', coin: normalized, startTime: Date.now() - FUNDING_LOOKBACK_MS, endTime: Date.now() }) })
+  ]);
+  const universe = Array.isArray(currentPayload[0] && currentPayload[0].universe) ? currentPayload[0].universe : [];
+  const contexts = Array.isArray(currentPayload[1]) ? currentPayload[1] : [];
+  const index = universe.findIndex(item => item && String(item.name || '').toUpperCase() === normalized);
+  if (index < 0 || !contexts[index]) throw new Error(`Hyperliquid-Markt fuer ${normalized} nicht gefunden`);
+  const ctx = contexts[index];
+  const rawHistory = Array.isArray(historyPayload) ? historyPayload : [];
+  const intervalSeconds = rawHistory.length > 1 ? Math.max(1, Math.round(Math.abs(rawHistory[1].time - rawHistory[0].time) / 1000)) : 3600;
+  const settled = rawHistory.map(item => ({ time: parseFloat(item.time) || 0, fundingRate: parseFloat(item.fundingRate), intervalSeconds }));
+  return buildFundingPayload('hyperliquid', exchangeName, normalized, normalized, ctx.funding, intervalSeconds, settled, { premium: parseFloat(ctx.premium) || 0 });
+}
+async function getExtendedFunding(token, exchangeName) {
+  const normalized = normalizeLookupSymbol(token);
+  if (!normalized) throw new Error('Ungueltiges Extended-Symbol');
+  const rows = await getExtendedMarkets();
+  const market = rows.map(row => ({ ...row, rank: Math.min(rankLookup(row.market, normalized), rankLookup(row.symbol, normalized)) })).filter(row => row.rank < 9).sort((a, b) => a.rank !== b.rank ? a.rank - b.rank : a.market.localeCompare(b.market))[0];
+  if (!market) throw new Error(`Extended-Markt fuer ${normalized} nicht gefunden`);
+  const [statsPayload, historyPayload] = await Promise.all([
+    fetchJson(`https://api.starknet.extended.exchange/api/v1/info/markets/${encodeURIComponent(market.market)}/stats`, { headers: { 'User-Agent': 'OpenCode Funding Integration' } }),
+    fetchJson(`https://api.starknet.extended.exchange/api/v1/info/${encodeURIComponent(market.market)}/funding?startTime=${Date.now() - FUNDING_LOOKBACK_MS}&endTime=${Date.now()}`, { headers: { 'User-Agent': 'OpenCode Funding Integration' } })
+  ]);
+  const stats = statsPayload && statsPayload.data ? statsPayload.data : null;
+  const rawHistory = historyPayload && Array.isArray(historyPayload.data) ? historyPayload.data : [];
+  const intervalSeconds = rawHistory.length > 1 ? Math.max(1, Math.round(Math.abs(rawHistory[1].T - rawHistory[0].T) / 1000)) : 3600;
+  const settled = rawHistory.map(item => ({ time: parseFloat(item.T) || 0, fundingRate: parseFloat(item.f), intervalSeconds }));
+  return buildFundingPayload('extended', exchangeName, market.market, market.symbol, stats ? stats.fundingRate : null, intervalSeconds, settled, { nextFundingTime: stats ? parseFloat(stats.nextFundingRate) || 0 : 0 });
+}
+async function getVariationalStatsListings() {
+  const cached = cacheGet('variational_stats_listings');
+  if (cached) return cached;
+  const payload = await fetchJson('https://omni-client-api.prod.ap-northeast-1.variational.io/metadata/stats');
+  const listings = Array.isArray(payload && payload.listings) ? payload.listings : [];
+  return cacheSet('variational_stats_listings', listings, EXCHANGE_CACHE_MS);
+}
+async function captureVariationalFundingSnapshotsForSymbols(symbols, listingsInput) {
+  const listings = Array.isArray(listingsInput) ? listingsInput : await getVariationalStatsListings();
+  const map = new Map(listings.map(item => [String(item.ticker || '').toUpperCase(), item]));
+  symbols.forEach(symbol => {
+    const item = map.get(String(symbol || '').toUpperCase());
+    if (!item) return;
+    storeVariationalFundingSnapshot(item.ticker, item.funding_rate, item.funding_interval_s, Date.now());
+  });
+}
+async function getTrackedVariationalTokens() {
+  const tracked = new Set();
+  try {
+    const result = await db.query('SELECT frf FROM profiles');
+    (result.rows || []).forEach(row => {
+      const frf = row && row.frf ? row.frf : {};
+      const exchanges = Array.isArray(frf.exchanges) ? frf.exchanges : [];
+      const positions = Array.isArray(frf.positions) ? frf.positions : [];
+      const variationalIds = new Set(exchanges.filter(ex => normalizeExchangeProvider(ex && ex.name) === 'variational').map(ex => ex.id));
+      positions.forEach(position => {
+        if (!position || position.endedAt) return;
+        const shortMatch = position.shortExchangeId && variationalIds.has(position.shortExchangeId);
+        const longMatch = !position.longIsSpot && position.longExchangeId && variationalIds.has(position.longExchangeId);
+        if ((shortMatch || longMatch) && position.token) tracked.add(String(position.token).toUpperCase());
+      });
+    });
+  } catch (error) {}
+  return [...tracked];
+}
+async function captureTrackedVariationalFunding() {
+  try {
+    const symbols = await getTrackedVariationalTokens();
+    if (!symbols.length) return;
+    const listings = await getVariationalStatsListings();
+    await captureVariationalFundingSnapshotsForSymbols(symbols, listings);
+  } catch (error) {
+    console.warn('variational funding capture:', error.message);
+  }
+}
+async function getVariationalFunding(token, exchangeName) {
+  const normalized = normalizeLookupSymbol(token, 20);
+  if (!normalized) throw new Error('Ungueltiges Variational-Symbol');
+  const listings = await getVariationalStatsListings();
+  await captureVariationalFundingSnapshotsForSymbols([normalized], listings);
+  const listing = listings.find(item => item && String(item.ticker || '').toUpperCase() === normalized);
+  if (!listing) throw new Error(`Variational-Markt fuer ${normalized} nicht gefunden`);
+  const settled = getVariationalSettlementEntries(normalized);
+  return buildFundingPayload('variational', exchangeName, normalized, normalized, listing.funding_rate, parseFloat(listing.funding_interval_s) || 0, settled, { historySource: settled.length ? 'snapshot' : 'pending' });
 }
 async function searchBybitSymbols(query) {
   const q = normalizeLookupSymbol(query, 30);
@@ -546,6 +752,16 @@ async function getExchangeQuote(exchangeName, token, mode) {
   if (provider === 'variational') return getVariationalQuote(token, mode, exchangeName);
   if (provider === 'phemex') return getPhemexQuote(token, mode, exchangeName);
   return getBybitQuote(token, mode, exchangeName);
+}
+async function getExchangeFunding(exchangeName, token, mode) {
+  if (mode === 'spot') return null;
+  const provider = normalizeExchangeProvider(exchangeName);
+  if (!provider) throw new Error('Boerse wird noch nicht unterstuetzt');
+  if (provider === 'extended') return getExtendedFunding(token, exchangeName);
+  if (provider === 'hyperliquid') return getHyperliquidFunding(token, exchangeName);
+  if (provider === 'variational') return getVariationalFunding(token, exchangeName);
+  if (provider === 'phemex') return getPhemexFunding(token, exchangeName);
+  return getBybitFunding(token, exchangeName);
 }
 async function getFrfSpotFallback(token, shortExchangeName, shortQuote) {
   if (normalizeExchangeProvider(shortExchangeName) === 'phemex') {
@@ -1829,25 +2045,31 @@ router.get('/frf/positions/:id/live', async (req, res) => {
     let longData = null;
     try {
       if (!shortExchange) throw new Error('Short-Boerse nicht gefunden');
-      const quote = await getExchangeQuote(shortExchange.name, position.token, 'perp');
+      const [quote, funding] = await Promise.all([
+        getExchangeQuote(shortExchange.name, position.token, 'perp'),
+        getExchangeFunding(shortExchange.name, position.token, 'perp')
+      ]);
       shortData = {
         ...quote,
+        funding,
         entryPrice: shortEntry,
         pnl: tokenAmount > 0 && shortEntry > 0 && quote.price > 0 ? (shortEntry - quote.price) * tokenAmount : 0
       };
     } catch (error) {
-      shortData = { exchangeName: shortExchange ? shortExchange.name : 'Short', error: error.message || 'Short-Livepreis fehlgeschlagen', entryPrice: shortEntry, pnl: 0 };
+      shortData = { exchangeName: shortExchange ? shortExchange.name : 'Short', error: error.message || 'Short-Livepreis fehlgeschlagen', funding: null, entryPrice: shortEntry, pnl: 0 };
     }
     try {
       const quote = position.longIsSpot ? await getFrfSpotFallback(position.token, shortExchange ? shortExchange.name : '', shortData && !shortData.error ? shortData : null) : await getExchangeQuote(longExchange ? longExchange.name : '', position.token, 'perp');
+      const funding = position.longIsSpot ? null : await getExchangeFunding(longExchange ? longExchange.name : '', position.token, 'perp');
       longData = {
         ...quote,
+        funding,
         exchangeName: position.longIsSpot ? (quote.exchangeName || 'Spot') : quote.exchangeName,
         entryPrice: longEntry,
         pnl: tokenAmount > 0 && longEntry > 0 && quote.price > 0 ? (quote.price - longEntry) * tokenAmount : 0
       };
     } catch (error) {
-      longData = { exchangeName: position.longIsSpot ? 'Spot' : (longExchange ? longExchange.name : 'Long'), error: error.message || 'Long-Livepreis fehlgeschlagen', entryPrice: longEntry, pnl: 0 };
+      longData = { exchangeName: position.longIsSpot ? 'Spot' : (longExchange ? longExchange.name : 'Long'), error: error.message || 'Long-Livepreis fehlgeschlagen', funding: null, entryPrice: longEntry, pnl: 0 };
     }
     return res.json({
       token: position.token,
@@ -2097,9 +2319,14 @@ process.on('uncaughtException', (err) => {
 });
 
 // Graceful Shutdown
-const server = app.listen(PORT, '0.0.0.0', () => { console.log(`🚀 DeFi Vault Server läuft auf Port ${PORT} (PostgreSQL+JWT)`); });
+const variationalFundingTimer = setInterval(() => { captureTrackedVariationalFunding().catch(() => {}); }, VARIATIONAL_FUNDING_CAPTURE_MS);
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 DeFi Vault Server läuft auf Port ${PORT} (PostgreSQL+JWT)`);
+  captureTrackedVariationalFunding().catch(() => {});
+});
 function gracefulShutdown(signal) {
   console.log(`\n${signal} empfangen. Fahre Server herunter...`);
+  clearInterval(variationalFundingTimer);
   server.close(() => {
     db.pool.end().then(() => {
       console.log('DB-Pool geschlossen. Server beendet.');
