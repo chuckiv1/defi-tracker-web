@@ -10,6 +10,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const fs = require('fs');
+const oracle = require('./services/oracle/aggregator');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -57,9 +58,6 @@ app.use('/api/auth/register', authLimiter);
 app.use('/api/auth/resend-verification', authLimiter);
 
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('/preview', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'preview.html'));
-});
 
 db.initDB().catch(err => console.error('❌ DB-Init fehlgeschlagen:', err));
 
@@ -1051,6 +1049,20 @@ app.get('/api/admin/messages/:id/recipients', requireSupport, async (req, res) =
 // ============================================
 app.get('/api/backup', requireAuth, attachProfile, (req, res) => {
   res.json({ backupVersion: "9.0", profileName: req.profile.name, timestamp: new Date().toISOString(), data: req.profile.data, frf: req.profile.frf });
+});
+app.get('/api/oracle/lookup', requireAuth, async (req, res) => {
+  try {
+    const asset = String(req.query.asset || '').trim().slice(0, 32);
+    const protocol = String(req.query.protocol || '').trim().slice(0, 40);
+    const type = String(req.query.type || '').trim().toUpperCase();
+    if (!asset) return res.status(400).json({ error: 'Asset fehlt' });
+    if (type && !['SUPPLY', 'BORROW', 'PRICE'].includes(type)) return res.status(400).json({ error: 'Ungueltiger Typ' });
+    const rows = await oracle.queryOracleData({ asset, protocol: protocol || undefined, type: type || undefined });
+    res.json(rows);
+  } catch (e) {
+    console.error('oracle lookup:', e.message);
+    res.status(500).json({ error: 'Oracle-Daten konnten nicht geladen werden' });
+  }
 });
 // ============================================
 // DEMO API (Unauthenticated)
