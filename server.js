@@ -37,6 +37,10 @@ const VERIFY_RESEND_LIMIT_MS = 10000;
 const verifyResendCooldowns = new Map();
 const ACTIVITY_TOUCH_MS = 60000;
 const activityTouchCache = new Map();
+const EXCHANGE_CACHE_MS = 5 * 60 * 1000;
+const VARIATIONAL_DISCOVERY_TTL_MS = 12 * 60 * 60 * 1000;
+const VARIATIONAL_BATCH_SIZE = 120;
+const exchangeLookupCache = new Map();
 const MESSAGE_SEGMENTS = new Set(['all_users', 'active_7d', 'active_30d', 'new_14d', 'verified_users', 'admins']);
 const ROLE_ORDER = ['user', 'support', 'admin', 'owner'];
 
@@ -70,6 +74,9 @@ setInterval(() => {
   for (const [key, val] of activityTouchCache) {
     if (now - val > ACTIVITY_TOUCH_MS * 10) activityTouchCache.delete(key);
   }
+  for (const [key, val] of exchangeLookupCache) {
+    if (!val || !val.expiresAt || now > val.expiresAt) exchangeLookupCache.delete(key);
+  }
 }, 600000);
 
 function gid() { return crypto.randomBytes(16).toString('hex'); }
@@ -90,6 +97,379 @@ function timingSafeCompare(a, b) {
   const bufB = Buffer.from(b, 'hex');
   if (bufA.length !== bufB.length) return false;
   return crypto.timingSafeEqual(bufA, bufB);
+}
+function cacheGet(key) {
+  const item = exchangeLookupCache.get(key);
+  if (!item || !item.expiresAt || Date.now() > item.expiresAt) {
+    exchangeLookupCache.delete(key);
+    return null;
+  }
+  return item.value;
+}
+function cacheSet(key, value, ttlMs = EXCHANGE_CACHE_MS) {
+  exchangeLookupCache.set(key, { value, expiresAt: Date.now() + ttlMs });
+  return value;
+}
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      accept: 'application/json',
+      ...(options.headers || {})
+    }
+  });
+  const text = await response.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch (error) {
+    throw new Error(`Ungueltige Antwort von ${url}`);
+  }
+  if (!response.ok) {
+    const message = data && (data.error || data.message || data.retMsg) ? String(data.error || data.message || data.retMsg) : `HTTP ${response.status}`;
+    throw new Error(message);
+  }
+  return data;
+}
+function normalizeExchangeProvider(name) {
+  const value = String(name || '').trim().toLowerCase();
+  if (!value) return null;
+  if (value.includes('extended')) return 'extended';
+  if (value.includes('hyperliquid') || value === 'hl') return 'hyperliquid';
+  if (value.includes('variational') || value.includes('omni')) return 'variational';
+  if (value.includes('bybit')) return 'bybit';
+  return null;
+}
+function normalizeLookupSymbol(raw, maxLen = 32) {
+  const value = String(raw || '').trim().toUpperCase().slice(0, maxLen);
+  return /^[A-Z0-9._-]{1,32}$/.test(value) ? value : '';
+}
+function rankLookup(value, query) {
+  if (!query) return 3;
+  const normalized = String(value || '').toUpperCase();
+  if (normalized === query) return 0;
+  if (normalized.startsWith(query)) return 1;
+  if (normalized.includes(query)) return 2;
+  return 9;
+}
+function preferUsdQuote(a, b) {
+  const order = { USDT: 0, USDC: 1, USD: 2 };
+  const av = order[String(a || '').toUpperCase()] ?? 9;
+  const bv = order[String(b || '').toUpperCase()] ?? 9;
+  return av - bv;
+}
+function uniqueBy(items, keyFn) {
+  const seen = new Map();
+  items.forEach(item => {
+    const key = keyFn(item);
+    if (!key || seen.has(key)) return;
+    seen.set(key, item);
+  });
+  return [...seen.values()];
+}
+function profileExchangeById(profile, exchangeId) {
+  if (!profile || !profile.frf || !Array.isArray(profile.frf.exchanges)) return null;
+  return profile.frf.exchanges.find(x => x.id === exchangeId) || null;
+}
+function buildQuotePayload(provider, exchangeName, market, symbol, price, referencePrice, bidPrice, askPrice, mode, sourceLabel) {
+  return {
+    provider,
+    exchangeName,
+    market,
+    symbol,
+    price,
+    referencePrice,
+    bidPrice,
+    askPrice,
+    mode,
+    sourceLabel
+  };
+}
+let variationalDiscoveryPromise = null;
+async function getExtendedMarkets() {
+  const cached = cacheGet('extended_markets');
+  if (cached) return cached;
+  const payload = await fetchJson('https://app.extended.exchange/api/v1/info/markets');
+  const rows = payload && Array.isArray(payload.data) ? payload.data : [];
+  const items = rows.filter(row => row && row.active && row.status === 'ACTIVE' && row.name && row.assetName).map(row => ({
+    symbol: String(row.assetName || '').toUpperCase(),
+    market: String(row.name || '').toUpperCase(),
+    quote: String(row.collateralAssetName || 'USD').toUpperCase(),
+    label: `${String(row.assetName || '').toUpperCase()} - ${String(row.name || '').toUpperCase()}`
+  }));
+  return cacheSet('extended_markets', items);
+}
+async function searchExtendedMarkets(query) {
+  const q = normalizeLookupSymbol(query, 30);
+  const rows = await getExtendedMarkets();
+  return rows.map(row => ({ ...row, rank: Math.min(rankLookup(row.symbol, q), rankLookup(row.market, q), rankLookup(row.label, q)) }))
+    .filter(row => !q || row.rank < 9)
+    .sort((a, b) => a.rank !== b.rank ? a.rank - b.rank : a.market.localeCompare(b.market))
+    .slice(0, 12);
+}
+async function getExtendedQuote(token, mode, exchangeName) {
+  const normalized = normalizeLookupSymbol(token);
+  if (!normalized) throw new Error('Ungueltiges Extended-Symbol');
+  const rows = await getExtendedMarkets();
+  const market = rows.map(row => ({ ...row, rank: Math.min(rankLookup(row.market, normalized), rankLookup(row.symbol, normalized)) }))
+    .filter(row => row.rank < 9)
+    .sort((a, b) => a.rank !== b.rank ? a.rank - b.rank : a.market.localeCompare(b.market))[0];
+  if (!market) throw new Error(`Extended-Markt fuer ${normalized} nicht gefunden`);
+  const payload = await fetchJson(`https://app.extended.exchange/api/v1/info/markets/${encodeURIComponent(market.market)}/stats`);
+  const data = payload && payload.data ? payload.data : null;
+  if (!data) throw new Error('Keine Extended-Marktdaten erhalten');
+  return buildQuotePayload('extended', exchangeName, market.market, market.symbol, parseFloat(data.lastPrice) || 0, parseFloat(data.markPrice) || 0, parseFloat(data.bidPrice) || 0, parseFloat(data.askPrice) || 0, mode, 'Extended market stats');
+}
+async function getHyperliquidUniverse() {
+  const cached = cacheGet('hyperliquid_universe');
+  if (cached) return cached;
+  const payload = await fetchJson('https://api.hyperliquid.xyz/info', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'meta' })
+  });
+  const rows = payload && Array.isArray(payload.universe) ? payload.universe : [];
+  const items = rows.filter(row => row && row.name && !row.isDelisted).map(row => ({
+    symbol: String(row.name || '').toUpperCase(),
+    market: String(row.name || '').toUpperCase(),
+    quote: 'USD',
+    label: `${String(row.name || '').toUpperCase()} perpetual`
+  }));
+  return cacheSet('hyperliquid_universe', items);
+}
+async function searchHyperliquidSymbols(query) {
+  const q = normalizeLookupSymbol(query, 30);
+  const rows = await getHyperliquidUniverse();
+  return rows.map(row => ({ ...row, rank: Math.min(rankLookup(row.symbol, q), rankLookup(row.label, q)) }))
+    .filter(row => !q || row.rank < 9)
+    .sort((a, b) => a.rank !== b.rank ? a.rank - b.rank : a.symbol.localeCompare(b.symbol))
+    .slice(0, 12);
+}
+async function getHyperliquidQuote(token, mode, exchangeName) {
+  const normalized = normalizeLookupSymbol(token, 20);
+  if (!normalized) throw new Error('Ungueltiges Hyperliquid-Symbol');
+  const payload = await fetchJson('https://api.hyperliquid.xyz/info', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'metaAndAssetCtxs' })
+  });
+  if (!Array.isArray(payload) || payload.length < 2) throw new Error('Unerwartete Hyperliquid-Antwort');
+  const universe = Array.isArray(payload[0] && payload[0].universe) ? payload[0].universe : [];
+  const contexts = Array.isArray(payload[1]) ? payload[1] : [];
+  const index = universe.findIndex(row => row && String(row.name || '').toUpperCase() === normalized);
+  if (index < 0 || !contexts[index]) throw new Error(`Hyperliquid-Markt fuer ${normalized} nicht gefunden`);
+  const ctx = contexts[index];
+  return buildQuotePayload('hyperliquid', exchangeName, normalized, normalized, parseFloat(ctx.markPx) || parseFloat(ctx.midPx) || 0, parseFloat(ctx.oraclePx) || 0, Array.isArray(ctx.impactPxs) ? parseFloat(ctx.impactPxs[0]) || 0 : 0, Array.isArray(ctx.impactPxs) ? parseFloat(ctx.impactPxs[1]) || 0 : 0, mode, 'Hyperliquid metaAndAssetCtxs');
+}
+async function getBybitSpotMarkets() {
+  const cached = cacheGet('bybit_spot_markets');
+  if (cached) return cached;
+  const payload = await fetchJson('https://api.bybit.com/v5/market/instruments-info?category=spot&limit=1000');
+  const rows = payload && payload.result && Array.isArray(payload.result.list) ? payload.result.list : [];
+  const items = rows.filter(row => row && row.status === 'Trading' && ['USDT', 'USDC', 'USD'].includes(String(row.quoteCoin || '').toUpperCase())).map(row => ({
+    symbol: String(row.baseCoin || '').toUpperCase(),
+    market: String(row.symbol || '').toUpperCase(),
+    quote: String(row.quoteCoin || '').toUpperCase(),
+    label: `${String(row.baseCoin || '').toUpperCase()} / ${String(row.quoteCoin || '').toUpperCase()}`
+  }));
+  return cacheSet('bybit_spot_markets', items);
+}
+async function getBybitPerpMarkets() {
+  const cached = cacheGet('bybit_perp_markets');
+  if (cached) return cached;
+  const payload = await fetchJson('https://api.bybit.com/v5/market/instruments-info?category=linear&limit=1000');
+  const rows = payload && payload.result && Array.isArray(payload.result.list) ? payload.result.list : [];
+  const items = rows.filter(row => row && row.status === 'Trading' && row.contractType === 'LinearPerpetual' && ['USDT', 'USDC'].includes(String(row.quoteCoin || '').toUpperCase())).map(row => ({
+    symbol: String(row.baseCoin || '').toUpperCase(),
+    market: String(row.symbol || '').toUpperCase(),
+    quote: String(row.quoteCoin || '').toUpperCase(),
+    label: `${String(row.baseCoin || '').toUpperCase()} perpetual ${String(row.quoteCoin || '').toUpperCase()}`
+  }));
+  return cacheSet('bybit_perp_markets', items);
+}
+async function searchBybitSymbols(query) {
+  const q = normalizeLookupSymbol(query, 30);
+  const [spot, perp] = await Promise.all([getBybitSpotMarkets(), getBybitPerpMarkets()]);
+  const merged = uniqueBy([...perp, ...spot].sort((a, b) => preferUsdQuote(a.quote, b.quote)), row => row.symbol);
+  return merged.map(row => ({ ...row, rank: Math.min(rankLookup(row.symbol, q), rankLookup(row.market, q), rankLookup(row.label, q)) }))
+    .filter(row => !q || row.rank < 9)
+    .sort((a, b) => a.rank !== b.rank ? a.rank - b.rank : preferUsdQuote(a.quote, b.quote) || a.symbol.localeCompare(b.symbol))
+    .slice(0, 12);
+}
+async function resolveBybitMarket(token, mode) {
+  const normalized = normalizeLookupSymbol(token, 24);
+  if (!normalized) throw new Error('Ungueltiges Bybit-Symbol');
+  const rows = mode === 'spot' ? await getBybitSpotMarkets() : await getBybitPerpMarkets();
+  const market = rows.map(row => ({ ...row, rank: Math.min(rankLookup(row.market, normalized), rankLookup(row.symbol, normalized)) }))
+    .filter(row => row.rank < 9)
+    .sort((a, b) => a.rank !== b.rank ? a.rank - b.rank : preferUsdQuote(a.quote, b.quote) || a.market.localeCompare(b.market))[0];
+  if (!market) throw new Error(`Bybit-Markt fuer ${normalized} nicht gefunden`);
+  return market;
+}
+async function getBybitQuote(token, mode, exchangeName) {
+  const market = await resolveBybitMarket(token, mode);
+  const category = mode === 'spot' ? 'spot' : 'linear';
+  const payload = await fetchJson(`https://api.bybit.com/v5/market/tickers?category=${encodeURIComponent(category)}&symbol=${encodeURIComponent(market.market)}`);
+  const row = payload && payload.result && Array.isArray(payload.result.list) ? payload.result.list[0] : null;
+  if (!row) throw new Error(`Bybit-Ticker fuer ${market.market} nicht gefunden`);
+  const price = mode === 'spot' ? parseFloat(row.lastPrice) || 0 : parseFloat(row.markPrice) || parseFloat(row.lastPrice) || 0;
+  const reference = parseFloat(row.indexPrice) || parseFloat(row.lastPrice) || 0;
+  return buildQuotePayload('bybit', exchangeName, market.market, market.symbol, price, reference, parseFloat(row.bid1Price) || 0, parseFloat(row.ask1Price) || 0, mode, mode === 'spot' ? 'Bybit spot ticker' : 'Bybit linear ticker');
+}
+async function getVariationalCandidates() {
+  const cached = cacheGet('variational_candidates');
+  if (cached) return cached;
+  const [extended, hyperliquid, bybitSpot, bybitPerp] = await Promise.all([getExtendedMarkets(), getHyperliquidUniverse(), getBybitSpotMarkets(), getBybitPerpMarkets()]);
+  const set = new Set();
+  [...extended, ...hyperliquid, ...bybitSpot, ...bybitPerp].forEach(row => { if (row && row.symbol) set.add(String(row.symbol).toUpperCase()); });
+  ['BTC', 'ETH', 'SOL', 'AVAX', 'ARB', 'DOGE', 'XRP', 'SUI', 'BNB', 'HYPE'].forEach(symbol => set.add(symbol));
+  return cacheSet('variational_candidates', [...set].filter(symbol => /^[A-Z0-9._-]{2,20}$/.test(symbol)).sort(), VARIATIONAL_DISCOVERY_TTL_MS);
+}
+function probeVariationalBatch(symbols) {
+  return new Promise((resolve, reject) => {
+    const found = new Set();
+    const unsupported = new Set();
+    const socket = new WebSocket('wss://omni-ws-server.prod.ap-northeast-1.variational.io/prices');
+    const timeout = setTimeout(() => {
+      try { socket.close(); } catch (error) {}
+      resolve({ found: [...found], unsupported: [...unsupported] });
+    }, 12000);
+    function finish(value) {
+      clearTimeout(timeout);
+      try { socket.close(); } catch (error) {}
+      resolve(value);
+    }
+    socket.addEventListener('open', () => {
+      socket.send(JSON.stringify({
+        action: 'subscribe',
+        instruments: symbols.map(symbol => ({
+          underlying: symbol,
+          instrument_type: 'perpetual_future',
+          settlement_asset: 'USDC',
+          funding_interval_s: 3600
+        }))
+      }));
+    });
+    socket.addEventListener('message', event => {
+      const raw = String(event.data || '');
+      if (!raw || raw.includes('heartbeat')) return;
+      if (raw.startsWith('unsupported instrument: P-')) {
+        unsupported.add(raw.replace('unsupported instrument: P-', '').replace('-USDC-3600', '').trim());
+      } else {
+        try {
+          const payload = JSON.parse(raw);
+          if (payload.channel && payload.channel.startsWith('instrument_price:P-')) found.add(payload.channel.replace('instrument_price:P-', '').replace('-USDC-3600', ''));
+        } catch (error) {}
+      }
+      if (found.size + unsupported.size >= symbols.length) finish({ found: [...found], unsupported: [...unsupported] });
+    });
+    socket.addEventListener('error', error => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+}
+async function discoverVariationalSymbols() {
+  const cached = cacheGet('variational_symbols');
+  if (cached) return cached;
+  if (variationalDiscoveryPromise) return variationalDiscoveryPromise;
+  variationalDiscoveryPromise = (async () => {
+    try {
+      const candidates = await getVariationalCandidates();
+      const found = new Set();
+      for (let index = 0; index < candidates.length; index += VARIATIONAL_BATCH_SIZE) {
+        const batch = candidates.slice(index, index + VARIATIONAL_BATCH_SIZE);
+        const result = await probeVariationalBatch(batch);
+        result.found.forEach(symbol => found.add(symbol));
+      }
+      const items = [...found].sort().map(symbol => ({ symbol, market: symbol, quote: 'USDC', label: `${symbol} perpetual` }));
+      return cacheSet('variational_symbols', items, VARIATIONAL_DISCOVERY_TTL_MS);
+    } finally {
+      variationalDiscoveryPromise = null;
+    }
+  })();
+  return variationalDiscoveryPromise;
+}
+async function searchVariationalSymbols(query) {
+  const q = normalizeLookupSymbol(query, 30);
+  const rows = await discoverVariationalSymbols();
+  return rows.map(row => ({ ...row, rank: Math.min(rankLookup(row.symbol, q), rankLookup(row.label, q)) }))
+    .filter(row => !q || row.rank < 9)
+    .sort((a, b) => a.rank !== b.rank ? a.rank - b.rank : a.symbol.localeCompare(b.symbol))
+    .slice(0, 12);
+}
+async function getVariationalQuote(token, mode, exchangeName) {
+  const normalized = normalizeLookupSymbol(token, 20);
+  if (!normalized) throw new Error('Ungueltiges Variational-Symbol');
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket('wss://omni-ws-server.prod.ap-northeast-1.variational.io/prices');
+    let done = false;
+    const timeout = setTimeout(() => {
+      if (done) return;
+      done = true;
+      try { socket.close(); } catch (error) {}
+      reject(new Error('Variational-Preisstream hat nicht rechtzeitig geantwortet'));
+    }, 8000);
+    function finish(error, value) {
+      if (done) return;
+      done = true;
+      clearTimeout(timeout);
+      try { socket.close(); } catch (closeError) {}
+      if (error) reject(error);
+      else resolve(value);
+    }
+    socket.addEventListener('open', () => {
+      socket.send(JSON.stringify({
+        action: 'subscribe',
+        instruments: [{ underlying: normalized, instrument_type: 'perpetual_future', settlement_asset: 'USDC', funding_interval_s: 3600 }]
+      }));
+    });
+    socket.addEventListener('message', event => {
+      const raw = String(event.data || '');
+      if (!raw || raw.includes('heartbeat')) return;
+      if (raw.startsWith('unsupported instrument: P-')) {
+        finish(new Error(raw));
+        return;
+      }
+      try {
+        const payload = JSON.parse(raw);
+        if (!payload.channel || !payload.pricing) {
+          finish(new Error('Variational hat ein unerwartetes Payload gesendet'));
+          return;
+        }
+        const pricing = payload.pricing;
+        finish(null, buildQuotePayload('variational', exchangeName, normalized, normalized, parseFloat(pricing.price) || 0, parseFloat(pricing.underlying_price) || 0, 0, 0, mode, 'Variational price websocket'));
+      } catch (error) {
+        finish(new Error(raw));
+      }
+    });
+    socket.addEventListener('error', () => finish(new Error('Variational-WebSocket konnte nicht verbunden werden')));
+    socket.addEventListener('close', () => { if (!done) finish(new Error('Variational-WebSocket wurde zu frueh geschlossen')); });
+  });
+}
+async function searchSymbolsForExchange(exchangeName, query) {
+  const provider = normalizeExchangeProvider(exchangeName);
+  if (!provider) throw new Error('Boerse wird noch nicht unterstuetzt');
+  if (provider === 'extended') return { provider, items: await searchExtendedMarkets(query) };
+  if (provider === 'hyperliquid') return { provider, items: await searchHyperliquidSymbols(query) };
+  if (provider === 'variational') return { provider, items: await searchVariationalSymbols(query) };
+  return { provider, items: await searchBybitSymbols(query) };
+}
+async function getExchangeQuote(exchangeName, token, mode) {
+  const provider = normalizeExchangeProvider(exchangeName);
+  if (!provider) throw new Error('Boerse wird noch nicht unterstuetzt');
+  if (provider === 'extended') return getExtendedQuote(token, mode, exchangeName);
+  if (provider === 'hyperliquid') return getHyperliquidQuote(token, mode, exchangeName);
+  if (provider === 'variational') return getVariationalQuote(token, mode, exchangeName);
+  return getBybitQuote(token, mode, exchangeName);
+}
+async function getFrfSpotFallback(token, shortExchangeName, shortQuote) {
+  if (normalizeExchangeProvider(shortExchangeName) === 'bybit') {
+    try { return await getBybitQuote(token, 'spot', `${shortExchangeName} Spot`); } catch (error) {}
+  }
+  try { return await getBybitQuote(token, 'spot', 'Bybit Spot'); } catch (error) {}
+  if (shortQuote) return { ...shortQuote, exchangeName: 'Spot-Fallback', sourceLabel: 'Short-Markt als Spot-Fallback' };
+  throw new Error('Kein Spot-Livepreis verfuegbar');
 }
 function normalizeRole(role) { return ROLE_ORDER.includes(role) ? role : 'user'; }
 function hasRole(account, minRole) {
@@ -1332,6 +1712,67 @@ router.delete('/strategies/:id/:type/:itemId', async (req, res) => {
   } catch(e) { console.error('item del:', e.message); res.status(500).json({error:'Fehler'}); }
 });
 
+router.get('/frf/exchanges/:id/symbols', async (req, res) => {
+  try {
+    const exchangeId = String(req.params.id || '').trim().slice(0, 100);
+    const query = String(req.query.q || '').trim().slice(0, 30);
+    if (!exchangeId) return res.status(400).json({ error: 'Boerse erforderlich' });
+    const exchange = profileExchangeById(req.profile, exchangeId);
+    if (!exchange) return res.status(404).json({ error: 'Boerse nicht gefunden' });
+    const result = await searchSymbolsForExchange(exchange.name, query);
+    return res.json({ exchangeId, exchangeName: exchange.name, provider: result.provider, items: result.items });
+  } catch (e) {
+    console.error('frf exchange symbols:', e.message);
+    return res.status(500).json({ error: e.message || 'Symbolsuche fehlgeschlagen' });
+  }
+});
+router.get('/frf/positions/:id/live', async (req, res) => {
+  try {
+    const positionId = String(req.params.id || '').trim().slice(0, 100);
+    if (!positionId) return res.status(400).json({ error: 'Position erforderlich' });
+    const position = req.profile.frf.positions.find(x => x.id === positionId);
+    if (!position) return res.status(404).json({ error: 'Position nicht gefunden' });
+    const shortExchange = position.shortExchangeId ? profileExchangeById(req.profile, position.shortExchangeId) : null;
+    const longExchange = !position.longIsSpot && position.longExchangeId ? profileExchangeById(req.profile, position.longExchangeId) : null;
+    const tokenAmount = !Number.isNaN(parseFloat(position.tokenAmount)) ? parseFloat(position.tokenAmount) : 0;
+    const shortEntry = !Number.isNaN(parseFloat(position.entryPriceShort)) ? parseFloat(position.entryPriceShort) : 0;
+    const longEntry = !Number.isNaN(parseFloat(position.entryPriceLong)) ? parseFloat(position.entryPriceLong) : 0;
+    let shortData = null;
+    let longData = null;
+    try {
+      if (!shortExchange) throw new Error('Short-Boerse nicht gefunden');
+      const quote = await getExchangeQuote(shortExchange.name, position.token, 'perp');
+      shortData = {
+        ...quote,
+        entryPrice: shortEntry,
+        pnl: tokenAmount > 0 && shortEntry > 0 && quote.price > 0 ? (shortEntry - quote.price) * tokenAmount : 0
+      };
+    } catch (error) {
+      shortData = { exchangeName: shortExchange ? shortExchange.name : 'Short', error: error.message || 'Short-Livepreis fehlgeschlagen', entryPrice: shortEntry, pnl: 0 };
+    }
+    try {
+      const quote = position.longIsSpot ? await getFrfSpotFallback(position.token, shortExchange ? shortExchange.name : '', shortData && !shortData.error ? shortData : null) : await getExchangeQuote(longExchange ? longExchange.name : '', position.token, 'perp');
+      longData = {
+        ...quote,
+        exchangeName: position.longIsSpot ? (quote.exchangeName || 'Spot') : quote.exchangeName,
+        entryPrice: longEntry,
+        pnl: tokenAmount > 0 && longEntry > 0 && quote.price > 0 ? (quote.price - longEntry) * tokenAmount : 0
+      };
+    } catch (error) {
+      longData = { exchangeName: position.longIsSpot ? 'Spot' : (longExchange ? longExchange.name : 'Long'), error: error.message || 'Long-Livepreis fehlgeschlagen', entryPrice: longEntry, pnl: 0 };
+    }
+    return res.json({
+      token: position.token,
+      fetchedAt: new Date().toISOString(),
+      short: shortData,
+      long: longData,
+      totalPnl: (shortData && !shortData.error ? shortData.pnl : 0) + (longData && !longData.error ? longData.pnl : 0)
+    });
+  } catch (e) {
+    console.error('frf live quote:', e.message);
+    return res.status(500).json({ error: e.message || 'Livepreise konnten nicht geladen werden' });
+  }
+});
 router.post('/frf/exchanges', async (req, res) => { try { svU(req, 'Börse+'); const f = req.profile.frf; f.exchanges.push({id:gid(), name:String(req.body.name||'').slice(0,100), marginHistory:[{id:gid(), amount:parseFloat(req.body.margin)||0, date:new Date().toISOString(), note:'Ersteinzahlung'}]}); await saveProfile(req); res.json(f); } catch(e) { console.error('exchange create:', e.message); res.status(500).json({error:'Fehler'}); }});
 router.delete('/frf/exchanges/:id', async (req, res) => { try { svU(req, 'Börse del'); const f = req.profile.frf; f.exchanges = f.exchanges.filter(x => x.id !== req.params.id); await saveProfile(req); res.json(f); } catch(e) { console.error('exchange del:', e.message); res.status(500).json({error:'Fehler'}); }});
 router.post('/frf/exchanges/:id/margin', async (req, res) => { try { const f = req.profile.frf; const e = f.exchanges.find(x => x.id === req.params.id); if(!e) return res.status(404).json({error:'Börse nicht gefunden'}); const amt = parseFloat(req.body.amount); if(isNaN(amt)) return res.status(400).json({error:'Ungültiger Betrag'}); svU(req, 'Margin+'); e.marginHistory.push({id:gid(), amount:amt, date:new Date().toISOString(), note:req.body.note||''}); await saveProfile(req); res.json(f); } catch(e) { console.error('margin:', e.message); res.status(500).json({error:'Fehler'}); }});
