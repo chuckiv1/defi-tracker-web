@@ -6,12 +6,17 @@ const cookieParser = require('cookie-parser');
 const nodemailer = require('nodemailer');
 const jwt = require('jsonwebtoken');
 const ExcelJS = require('exceljs');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
 const APP_URL = process.env.APP_URL || 'https://defivault.cloud';
+if (!process.env.JWT_SECRET) {
+  console.warn('⚠️  WARNUNG: JWT_SECRET ist nicht gesetzt! Verwende unsicheren Fallback. In Produktion UNBEDINGT setzen!');
+}
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_do_not_use_in_prod';
 const APP_IS_HTTPS = (() => {
   try {
@@ -41,15 +46,53 @@ const SMTP_CONFIG = {
   auth: { user: process.env.SMTP_USER || "", pass: process.env.SMTP_PASS || "" }
 };
 
-app.use(express.json({ limit: '50mb' }));
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 app.set('trust proxy', 1);
-app.use(express.static(path.join(__dirname, 'public')));
 
-db.initDB(); // Initialisiere Datenbanktabellen beim Start
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false, message: { error: 'Zu viele Versuche. Bitte warte 15 Minuten.' } });
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/resend-verification', authLimiter);
+
+app.use(express.static(path.join(__dirname, 'public')));
+app.get('/preview', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'preview.html'));
+});
+
+db.initDB().catch(err => console.error('❌ DB-Init fehlgeschlagen:', err));
+
+// Cleanup Maps alle 10 Minuten um Memory Leaks zu verhindern
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of verifyResendCooldowns) {
+    if (now - val > VERIFY_RESEND_LIMIT_MS * 3) verifyResendCooldowns.delete(key);
+  }
+  for (const [key, val] of activityTouchCache) {
+    if (now - val > ACTIVITY_TOUCH_MS * 10) activityTouchCache.delete(key);
+  }
+}, 600000);
 
 function gid() { return crypto.randomBytes(16).toString('hex'); }
-function hashPass(password, salt) { return crypto.pbkdf2Sync(password, salt, 210000, 64, 'sha512').toString('hex'); }
+function hashPass(password, salt) {
+  return crypto.pbkdf2Sync(password, salt, 210000, 64, 'sha512').toString('hex');
+}
+function hashPassAsync(password, salt) {
+  return new Promise((resolve, reject) => {
+    crypto.pbkdf2(password, salt, 210000, 64, 'sha512', (err, key) => {
+      if (err) reject(err);
+      else resolve(key.toString('hex'));
+    });
+  });
+}
+function timingSafeCompare(a, b) {
+  if (!a || !b) return false;
+  const bufA = Buffer.from(a, 'hex');
+  const bufB = Buffer.from(b, 'hex');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
 function normalizeRole(role) { return ROLE_ORDER.includes(role) ? role : 'user'; }
 function hasRole(account, minRole) {
   if (!account) return false;
@@ -348,14 +391,20 @@ async function saveProfile(req) {
 // AUTH & ACCOUNT API
 // ============================================
 app.get('/api/auth/status', async (req, res) => {
-  if (!req.account) return res.json({ loggedIn: false });
-  const { rows: profiles } = await db.query('SELECT id, name FROM profiles WHERE accountid = $1', [req.account.id]);
-  res.json({ loggedIn: true, account: { email: req.account.email, role: req.account.role }, profiles });
+  try {
+    if (!req.account) return res.json({ loggedIn: false });
+    const { rows: profiles } = await db.query('SELECT id, name FROM profiles WHERE accountid = $1', [req.account.id]);
+    res.json({ loggedIn: true, account: { email: req.account.email, role: req.account.role }, profiles });
+  } catch(e) {
+    console.error('auth/status error:', e.message);
+    res.status(500).json({ error: 'Interner Fehler' });
+  }
 });
 
 app.post('/api/auth/register', async (req, res) => {
+  try {
   const { email, password } = req.body;
-  if (!email || !email.includes('@') || password.length < 8) return res.status(400).json({ error: 'Ungültige Daten' });
+  if (!email || !email.includes('@') || !password || password.length < 8) return res.status(400).json({ error: 'Ungültige Daten' });
   
   const { rows: existing } = await db.query('SELECT id FROM accounts WHERE LOWER(email) = LOWER($1)', [email]);
   if (existing.length > 0) return res.status(400).json({ error: 'E-Mail existiert bereits' });
@@ -366,7 +415,7 @@ app.post('/api/auth/register', async (req, res) => {
   const salt = crypto.randomBytes(16).toString('hex');
   const verifyToken = gid();
   const accId = gid();
-  const passHash = hashPass(password, salt);
+  const passHash = await hashPassAsync(password, salt);
   const role = isFirstUser ? 'admin' : 'user';
   
   await db.query(
@@ -377,23 +426,35 @@ app.post('/api/auth/register', async (req, res) => {
   const link = `${APP_URL}/verify.html?token=${verifyToken}`;
   await sendMail(email, "DeFi Vault - Bitte verifiziere deine E-Mail", `Klicke hier, um deinen Account freizuschalten: <a href="${link}">${link}</a>`);
   res.json({ ok: 1 });
+  } catch(e) {
+    console.error('register error:', e.message);
+    if (e.code === '23505') return res.status(400).json({ error: 'E-Mail existiert bereits' });
+    res.status(500).json({ error: 'Registrierung fehlgeschlagen' });
+  }
 });
 
 app.post('/api/auth/verify', async (req, res) => {
-  const { token } = req.body;
-  const { rows } = await db.query('SELECT * FROM accounts WHERE verifyToken = $1', [token]);
-  if (rows.length === 0) return res.status(400).json({ error: 'Ungültiger oder abgelaufener Link' });
-  
-  const acc = rows[0];
-  await db.query('UPDATE accounts SET isVerified = true, verifyToken = NULL WHERE id = $1', [acc.id]);
-  
-  // Automatisches Standard-Profil anlegen
-  await db.query('INSERT INTO profiles (id, accountid, name) VALUES ($1, $2, $3)', [gid(), acc.id, 'Main Wallet']);
-  
-  res.json({ ok: 1 });
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ error: 'Token fehlt' });
+    const { rows } = await db.query('SELECT * FROM accounts WHERE verifyToken = $1', [token]);
+    if (rows.length === 0) return res.status(400).json({ error: 'Ungültiger oder abgelaufener Link' });
+    
+    const acc = rows[0];
+    await db.query('UPDATE accounts SET isVerified = true, verifyToken = NULL WHERE id = $1', [acc.id]);
+    
+    // Automatisches Standard-Profil anlegen
+    await db.query('INSERT INTO profiles (id, accountid, name) VALUES ($1, $2, $3)', [gid(), acc.id, 'Main Wallet']);
+    
+    res.json({ ok: 1 });
+  } catch(e) {
+    console.error('verify error:', e.message);
+    res.status(500).json({ error: 'Verifizierung fehlgeschlagen' });
+  }
 });
 
 app.post('/api/auth/resend-verification', async (req, res) => {
+  try {
   const email = String(req.body.email || '').trim().toLowerCase();
   if (!email || !email.includes('@')) return res.status(400).json({ error: 'Ungültige E-Mail' });
 
@@ -405,7 +466,7 @@ app.post('/api/auth/resend-verification', async (req, res) => {
   }
 
   const { rows } = await db.query('SELECT * FROM accounts WHERE LOWER(email) = LOWER($1)', [email]);
-  if (rows.length === 0) return res.status(404).json({ error: 'Kein Account mit dieser E-Mail gefunden' });
+  if (rows.length === 0) return res.status(400).json({ error: 'Anfrage konnte nicht verarbeitet werden' });
 
   const acc = rows[0];
   if (acc.isverified) return res.status(400).json({ error: 'E-Mail ist bereits verifiziert' });
@@ -419,32 +480,43 @@ app.post('/api/auth/resend-verification', async (req, res) => {
   await sendMail(acc.email, 'DeFi Vault - Bitte verifiziere deine E-Mail', `Klicke hier, um deinen Account freizuschalten: <a href="${link}">${link}</a>`);
   verifyResendCooldowns.set(email, now);
   res.json({ ok: 1, retryAfterMs: VERIFY_RESEND_LIMIT_MS });
+  } catch(e) {
+    console.error('resend-verification error:', e.message);
+    res.status(500).json({ error: 'Interner Fehler' });
+  }
 });
 
 app.post('/api/auth/login', async (req, res) => {
-  const { email, password, rememberMe } = req.body;
-  const { rows } = await db.query('SELECT * FROM accounts WHERE LOWER(email) = LOWER($1)', [email]);
-  if (rows.length === 0) return res.status(401).json({ error: 'Falsche E-Mail oder Passwort' });
-  
-  const acc = rows[0];
-  if (acc.passhash !== hashPass(password, acc.salt)) return res.status(401).json({ error: 'Falsche E-Mail oder Passwort' });
-  if (acc.isblocked) return res.status(403).json({ error: 'Account ist blockiert' });
-  if (!acc.isverified) return res.status(403).json({ error: 'E-Mail noch nicht verifiziert' });
-  
-  // Track login
-  const today = new Date().toISOString().split('T')[0];
-  await db.query(
-    'INSERT INTO account_logins (id, accountId, loginDate) VALUES ($1, $2, $3) ON CONFLICT (accountId, loginDate) DO NOTHING',
-    [gid(), acc.id, today]
-  ).catch(e => console.error("Fehler beim Login Tracking:", e));
-  touchPresence(acc.id);
+  try {
+    const { email, password, rememberMe } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'E-Mail und Passwort erforderlich' });
+    const { rows } = await db.query('SELECT * FROM accounts WHERE LOWER(email) = LOWER($1)', [email]);
+    if (rows.length === 0) return res.status(401).json({ error: 'Falsche E-Mail oder Passwort' });
+    
+    const acc = rows[0];
+    const computedHash = await hashPassAsync(password, acc.salt);
+    if (!timingSafeCompare(acc.passhash, computedHash)) return res.status(401).json({ error: 'Falsche E-Mail oder Passwort' });
+    if (acc.isblocked) return res.status(403).json({ error: 'Account ist blockiert' });
+    if (!acc.isverified) return res.status(403).json({ error: 'E-Mail noch nicht verifiziert' });
+    
+    // Track login
+    const today = new Date().toISOString().split('T')[0];
+    await db.query(
+      'INSERT INTO account_logins (id, accountId, loginDate) VALUES ($1, $2, $3) ON CONFLICT (accountId, loginDate) DO NOTHING',
+      [gid(), acc.id, today]
+    ).catch(e => console.error("Fehler beim Login Tracking:", e));
+    touchPresence(acc.id);
 
-  const token = jwt.sign({ accountId: acc.id }, JWT_SECRET, { expiresIn: '30d' });
-  const cookieOpts = rememberMe
-    ? { ...SESSION_COOKIE_OPTS, maxAge: 7 * 24 * 60 * 60 * 1000 }
-    : { ...SESSION_COOKIE_OPTS };
-  res.cookie(SESSION_COOKIE, token, cookieOpts);
-  res.json({ ok: 1 });
+    const token = jwt.sign({ accountId: acc.id }, JWT_SECRET, { expiresIn: '7d' });
+    const cookieOpts = rememberMe
+      ? { ...SESSION_COOKIE_OPTS, maxAge: 7 * 24 * 60 * 60 * 1000 }
+      : { ...SESSION_COOKIE_OPTS };
+    res.cookie(SESSION_COOKIE, token, cookieOpts);
+    res.json({ ok: 1 });
+  } catch(e) {
+    console.error('login error:', e.message);
+    res.status(500).json({ error: 'Interner Fehler' });
+  }
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -456,21 +528,29 @@ app.post('/api/auth/logout', (req, res) => {
 // PROFILE (WALLETS) API
 // ============================================
 app.post('/api/profiles', requireAuth, async (req, res) => {
-  const name = String(req.body.name || '').trim();
-  if (!name) return res.status(400).json({ error: 'Name fehlt' });
-  const pId = gid();
-  await db.query('INSERT INTO profiles (id, accountid, name) VALUES ($1, $2, $3)', [pId, req.account.id, name]);
-  res.json({ id: pId, accountId: req.account.id, name });
+  try {
+    const name = String(req.body.name || '').trim().slice(0, 100);
+    if (!name) return res.status(400).json({ error: 'Name fehlt' });
+    const pId = gid();
+    await db.query('INSERT INTO profiles (id, accountid, name) VALUES ($1, $2, $3)', [pId, req.account.id, name]);
+    res.json({ id: pId, accountId: req.account.id, name });
+  } catch(e) { console.error('profile create error:', e.message); res.status(500).json({ error: 'Fehler beim Erstellen' }); }
 });
 app.put('/api/profiles/:id', requireAuth, async (req, res) => {
-  const name = String(req.body.name || '').trim();
-  const { rowCount } = await db.query('UPDATE profiles SET name = $1 WHERE id = $2 AND accountid = $3', [name, req.params.id, req.account.id]);
-  if (rowCount === 0) return res.status(404).json({});
-  res.json({ id: req.params.id, name });
+  try {
+    const name = String(req.body.name || '').trim().slice(0, 100);
+    if (!name) return res.status(400).json({ error: 'Name fehlt' });
+    const { rowCount } = await db.query('UPDATE profiles SET name = $1 WHERE id = $2 AND accountid = $3', [name, req.params.id, req.account.id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Profil nicht gefunden' });
+    res.json({ id: req.params.id, name });
+  } catch(e) { console.error('profile update error:', e.message); res.status(500).json({ error: 'Fehler beim Aktualisieren' }); }
 });
 app.delete('/api/profiles/:id', requireAuth, async (req, res) => {
-  await db.query('DELETE FROM profiles WHERE id = $1 AND accountid = $2', [req.params.id, req.account.id]);
-  res.json({ ok: 1 });
+  try {
+    if (req.params.id === req.account.id) return res.status(400).json({ error: 'Eigenes Profil kann nicht gelöscht werden' });
+    await db.query('DELETE FROM profiles WHERE id = $1 AND accountid = $2', [req.params.id, req.account.id]);
+    res.json({ ok: 1 });
+  } catch(e) { console.error('profile delete error:', e.message); res.status(500).json({ error: 'Fehler beim Löschen' }); }
 });
 
 // ============================================
@@ -569,44 +649,53 @@ app.post('/api/loops/:id/close', requireAuth, attachProfile, async (req, res) =>
 // ADMIN API
 // ============================================
 app.get('/api/admin/accounts', requireAdmin, async (req, res) => {
-  const { rows } = await db.query(`
-    SELECT a.id, a.email, a.role, a.isverified, a.isblocked, a.createdat,
-           COUNT(DISTINCT p.id) as "profileCount", COUNT(DISTINCT l.id) as "loginCount30d",
-           MAX(ap.lastseen) as "lastSeenAt"
-    FROM accounts a 
-    LEFT JOIN profiles p ON a.id = p.accountid
-    LEFT JOIN account_logins l ON a.id = l.accountid AND l.logindate >= CURRENT_DATE - INTERVAL '30 days'
-    LEFT JOIN account_presence ap ON a.id = ap.accountid
-    GROUP BY a.id ORDER BY a.createdat DESC
-  `);
-  res.json(rows);
+  try {
+    const { rows } = await db.query(`
+      SELECT a.id, a.email, a.role, a.isverified, a.isblocked, a.createdat,
+             COUNT(DISTINCT p.id) as "profileCount", COUNT(DISTINCT l.id) as "loginCount30d",
+             MAX(ap.lastseen) as "lastSeenAt"
+      FROM accounts a 
+      LEFT JOIN profiles p ON a.id = p.accountid
+      LEFT JOIN account_logins l ON a.id = l.accountid AND l.logindate >= CURRENT_DATE - INTERVAL '30 days'
+      LEFT JOIN account_presence ap ON a.id = ap.accountid
+      GROUP BY a.id ORDER BY a.createdat DESC
+    `);
+    res.json(rows);
+  } catch(e) { console.error('admin accounts error:', e.message); res.status(500).json({ error: 'Fehler' }); }
 });
 app.get('/api/admin/accounts/:id/stats', requireAdmin, async (req, res) => {
-  // Liefert die Logins der letzten 365 Tage für Charts
-  const { rows } = await db.query(`
-    SELECT logindate as date FROM account_logins 
-    WHERE accountId = $1 AND logindate >= CURRENT_DATE - INTERVAL '365 days'
-    ORDER BY logindate ASC
-  `, [req.params.id]);
-  res.json(rows.map(r => r.date));
+  try {
+    const { rows } = await db.query(`
+      SELECT logindate as date FROM account_logins 
+      WHERE accountId = $1 AND logindate >= CURRENT_DATE - INTERVAL '365 days'
+      ORDER BY logindate ASC
+    `, [req.params.id]);
+    res.json(rows.map(r => r.date));
+  } catch(e) { console.error('admin stats error:', e.message); res.status(500).json({ error: 'Fehler' }); }
 });
 app.put('/api/admin/accounts/:id/toggle-block', requireAdmin, async (req, res) => {
-  const { rows } = await db.query('SELECT * FROM accounts WHERE id = $1', [req.params.id]);
-  if (rows.length === 0) return res.status(400).json({});
-  const targetRole = normalizeRole(rows[0].role);
-  if (targetRole === 'owner') return res.status(400).json({ error: 'Owner kann nicht gesperrt werden' });
-  if (targetRole === 'admin' && !hasRole(req.account, 'owner')) return res.status(403).json({ error: 'Nur Owner kann Admins sperren' });
-  await db.query('UPDATE accounts SET isblocked = NOT isblocked WHERE id = $1', [req.params.id]);
-  res.json({ ok: 1 });
+  try {
+    if (req.params.id === req.account.id) return res.status(400).json({ error: 'Eigenen Account kann man nicht sperren' });
+    const { rows } = await db.query('SELECT * FROM accounts WHERE id = $1', [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Account nicht gefunden' });
+    const targetRole = normalizeRole(rows[0].role);
+    if (targetRole === 'owner') return res.status(400).json({ error: 'Owner kann nicht gesperrt werden' });
+    if (targetRole === 'admin' && !hasRole(req.account, 'owner')) return res.status(403).json({ error: 'Nur Owner kann Admins sperren' });
+    await db.query('UPDATE accounts SET isblocked = NOT isblocked WHERE id = $1', [req.params.id]);
+    res.json({ ok: 1 });
+  } catch(e) { console.error('admin toggle-block error:', e.message); res.status(500).json({ error: 'Fehler' }); }
 });
 app.delete('/api/admin/accounts/:id', requireAdmin, async (req, res) => {
-  const { rows } = await db.query('SELECT * FROM accounts WHERE id = $1', [req.params.id]);
-  if (rows.length === 0) return res.status(400).json({});
-  const targetRole = normalizeRole(rows[0].role);
-  if (targetRole === 'owner') return res.status(400).json({ error: 'Owner kann nicht gelöscht werden' });
-  if (targetRole === 'admin' && !hasRole(req.account, 'owner')) return res.status(403).json({ error: 'Nur Owner kann Admins löschen' });
-  await db.query('DELETE FROM accounts WHERE id = $1', [req.params.id]);
-  res.json({ ok: 1 });
+  try {
+    if (req.params.id === req.account.id) return res.status(400).json({ error: 'Eigenen Account kann man nicht löschen' });
+    const { rows } = await db.query('SELECT * FROM accounts WHERE id = $1', [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Account nicht gefunden' });
+    const targetRole = normalizeRole(rows[0].role);
+    if (targetRole === 'owner') return res.status(400).json({ error: 'Owner kann nicht gelöscht werden' });
+    if (targetRole === 'admin' && !hasRole(req.account, 'owner')) return res.status(403).json({ error: 'Nur Owner kann Admins löschen' });
+    await db.query('DELETE FROM accounts WHERE id = $1', [req.params.id]);
+    res.json({ ok: 1 });
+  } catch(e) { console.error('admin delete error:', e.message); res.status(500).json({ error: 'Fehler' }); }
 });
 app.put('/api/admin/accounts/:id/role', requireAdmin, async (req, res) => {
   const nextRole = normalizeRole(req.body.role);
@@ -639,7 +728,10 @@ app.get('/api/admin/features', requireAdmin, async (req, res) => {
 
 app.put('/api/admin/features/:id/status', requireAdmin, async (req, res) => {
   try {
-    await db.query('UPDATE feature_requests SET status = $1 WHERE id = $2', [req.body.status, req.params.id]);
+    const validStatuses = ['pending', 'approved', 'planned', 'implemented', 'rejected'];
+    const status = String(req.body.status || '').trim();
+    if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Ungültiger Status' });
+    await db.query('UPDATE feature_requests SET status = $1 WHERE id = $2', [status, req.params.id]);
     res.json({ ok: 1 });
   } catch(e) { console.error(e); res.status(500).json({error:1}); }
 });
@@ -796,6 +888,16 @@ app.put('/api/messages/:id', requireAuth, async (req, res) => {
 
     const payload = normalizeMessagePayload(req.body || {});
     if (!payload.title || !payload.body) return res.status(400).json({ error: 'Betreff und Nachricht sind erforderlich' });
+
+    // Privilege Escalation Fix: Normale User dürfen nur direkte Nachrichten senden
+    if (!hasRole(req.account, 'support')) {
+      payload.targetType = 'direct';
+      payload.status = 'sent';
+      payload.category = 'support';
+      payload.isPinned = false;
+      payload.emailMirror = false;
+    }
+
     if (payload.targetType === 'direct' && !payload.targetAccountId) return res.status(400).json({ error: 'Empfänger fehlt' });
     if (payload.targetType === 'segment' && !MESSAGE_SEGMENTS.has(payload.audiencePreset)) return res.status(400).json({ error: 'Ungültiges Segment' });
     if (payload.status === 'scheduled' && !payload.scheduledAt) return res.status(400).json({ error: 'Zeitpunkt für geplante Nachricht fehlt' });
@@ -1104,11 +1206,14 @@ app.get('/api/export/excel', requireAuth, attachProfile, async (req, res) => {
 // ============================================
 app.get('/api/undo', requireAuth, attachProfile, (req, res) => { res.json(req.profile.undo.map((u, i) => ({ index: i, label: u.label, time: u.time }))); });
 app.post('/api/undo/:index', requireAuth, attachProfile, async (req, res) => {
-  const undo = req.profile.undo; const idx = parseInt(req.params.index, 10); if (idx < 0 || idx >= undo.length) return res.status(400).json({});
-  req.profile.data = undo[idx].data; if (undo[idx].frf) req.profile.frf = undo[idx].frf;
-  req.profile.undo = undo.slice(0, idx); 
-  await saveProfile(req);
-  res.json({ ok: 1 });
+  try {
+    const undo = req.profile.undo; const idx = parseInt(req.params.index, 10);
+    if (isNaN(idx) || idx < 0 || idx >= undo.length) return res.status(400).json({ error: 'Ungültiger Index' });
+    req.profile.data = undo[idx].data; if (undo[idx].frf) req.profile.frf = undo[idx].frf;
+    req.profile.undo = undo.slice(0, idx); 
+    await saveProfile(req);
+    res.json({ ok: 1 });
+  } catch(e) { console.error('undo error:', e.message); res.status(500).json({ error: 'Fehler' }); }
 });
 
 app.get('/api/strategies', requireAuth, attachProfile, (req, res) => { res.json(req.profile.data); });
@@ -1124,21 +1229,26 @@ function svU(req, lbl) {
 const router = express.Router();
 app.use('/api', requireAuth, attachProfile, router);
 
-router.post('/strategies', async (req, res) => { svU(req, 'Neue Strategie'); const d = req.profile.data; d.push({id: gid(), name: req.body.name, startDate: req.body.startDate, notes: req.body.notes||'', token: req.body.token||null, includeInTotalApr: true, investmentHistory: [{id:gid(), amount:parseFloat(req.body.investment), date:req.body.startDate, note:''}], rewards:[], pnl:[], endedAt:null}); req.profile.data = d; await saveProfile(req); res.json(d[d.length-1]);});
-router.delete('/strategies/:id', async (req, res) => { svU(req, 'Strat del'); req.profile.data = req.profile.data.filter(s => s.id !== req.params.id); await saveProfile(req); res.json({ok:1});});
+router.post('/strategies', async (req, res) => { try { const inv = parseFloat(req.body.investment); if (isNaN(inv)) return res.status(400).json({ error: 'Ungültiges Investment' }); svU(req, 'Neue Strategie'); const d = req.profile.data; d.push({id: gid(), name: String(req.body.name||'').slice(0,200), startDate: req.body.startDate, notes: req.body.notes||'', token: req.body.token||null, includeInTotalApr: true, investmentHistory: [{id:gid(), amount:inv, date:req.body.startDate, note:''}], rewards:[], pnl:[], endedAt:null}); req.profile.data = d; await saveProfile(req); res.json(d[d.length-1]); } catch(e) { console.error('strategy create:', e.message); res.status(500).json({error:'Fehler'}); }});
+router.delete('/strategies/:id', async (req, res) => { try { svU(req, 'Strat del'); req.profile.data = req.profile.data.filter(s => s.id !== req.params.id); await saveProfile(req); res.json({ok:1}); } catch(e) { console.error('strategy delete:', e.message); res.status(500).json({error:'Fehler'}); }});
 router.put('/strategies/:id/:action', async (req, res) => {
-  svU(req, 'Strat Edit'); const s = req.profile.data.find(x => x.id === req.params.id); if(!s) return res.status(404).json({});
-  if(req.params.action === 'end') s.endedAt = new Date().toISOString();
-  if(req.params.action === 'reactivate') s.endedAt = null;
-  if(req.params.action === 'enddate') s.endedAt = req.body.endedAt || new Date().toISOString();
-  if(req.params.action === 'notes') s.notes = req.body.notes||'';
-  if(req.params.action === 'token') s.token = req.body.name ? {name: req.body.name, amount: parseFloat(req.body.amount)||0, entryPrice: parseFloat(req.body.entryPrice)||0} : null;
-  if(req.params.action === 'toggle-total-apr') s.includeInTotalApr = !s.includeInTotalApr;
-  await saveProfile(req); res.json(s);
+  try {
+    const validActions = ['end', 'reactivate', 'enddate', 'notes', 'token', 'toggle-total-apr'];
+    if (!validActions.includes(req.params.action)) return res.status(400).json({ error: 'Ungültige Aktion' });
+    const s = req.profile.data.find(x => x.id === req.params.id); if(!s) return res.status(404).json({ error: 'Strategie nicht gefunden' });
+    svU(req, 'Strat Edit');
+    if(req.params.action === 'end') s.endedAt = new Date().toISOString();
+    if(req.params.action === 'reactivate') s.endedAt = null;
+    if(req.params.action === 'enddate') s.endedAt = req.body.endedAt || new Date().toISOString();
+    if(req.params.action === 'notes') s.notes = req.body.notes||'';
+    if(req.params.action === 'token') s.token = req.body.name ? {name: req.body.name, amount: parseFloat(req.body.amount)||0, entryPrice: parseFloat(req.body.entryPrice)||0} : null;
+    if(req.params.action === 'toggle-total-apr') s.includeInTotalApr = !s.includeInTotalApr;
+    await saveProfile(req); res.json(s);
+  } catch(e) { console.error('strategy edit:', e.message); res.status(500).json({error:'Fehler'}); }
 });
-router.post('/strategies/:id/investment', async (req, res) => { svU(req, 'Invest+'); const s = req.profile.data.find(x => x.id === req.params.id); s.investmentHistory.push({id:gid(), amount:parseFloat(req.body.amount), date:new Date().toISOString(), note:req.body.note||''}); await saveProfile(req); res.json(s); });
-router.post('/strategies/:id/rewards', async (req, res) => { svU(req, 'Reward+'); const s = req.profile.data.find(x => x.id === req.params.id); s.rewards.push({id:gid(), amount:parseFloat(req.body.amount), date:req.body.date||new Date().toISOString(), note:req.body.note||''}); await saveProfile(req); res.json(s); });
-router.post('/strategies/:id/pnl', async (req, res) => { svU(req, 'PNL+'); const s = req.profile.data.find(x => x.id === req.params.id); s.pnl.push({id:gid(), amount:parseFloat(req.body.amount), note:req.body.note||'', date:new Date().toISOString(), includeInAPR:false}); await saveProfile(req); res.json(s); });
+router.post('/strategies/:id/investment', async (req, res) => { try { const s = req.profile.data.find(x => x.id === req.params.id); if(!s) return res.status(404).json({error:'Nicht gefunden'}); const amt = parseFloat(req.body.amount); if(isNaN(amt)) return res.status(400).json({error:'Ungültiger Betrag'}); svU(req, 'Invest+'); s.investmentHistory.push({id:gid(), amount:amt, date:new Date().toISOString(), note:req.body.note||''}); await saveProfile(req); res.json(s); } catch(e) { console.error('invest:', e.message); res.status(500).json({error:'Fehler'}); }});
+router.post('/strategies/:id/rewards', async (req, res) => { try { const s = req.profile.data.find(x => x.id === req.params.id); if(!s) return res.status(404).json({error:'Nicht gefunden'}); const amt = parseFloat(req.body.amount); if(isNaN(amt)) return res.status(400).json({error:'Ungültiger Betrag'}); svU(req, 'Reward+'); s.rewards.push({id:gid(), amount:amt, date:req.body.date||new Date().toISOString(), note:req.body.note||''}); await saveProfile(req); res.json(s); } catch(e) { console.error('reward:', e.message); res.status(500).json({error:'Fehler'}); }});
+router.post('/strategies/:id/pnl', async (req, res) => { try { const s = req.profile.data.find(x => x.id === req.params.id); if(!s) return res.status(404).json({error:'Nicht gefunden'}); const amt = parseFloat(req.body.amount); if(isNaN(amt)) return res.status(400).json({error:'Ungültiger Betrag'}); svU(req, 'PNL+'); s.pnl.push({id:gid(), amount:amt, note:req.body.note||'', date:new Date().toISOString(), includeInAPR:false}); await saveProfile(req); res.json(s); } catch(e) { console.error('pnl:', e.message); res.status(500).json({error:'Fehler'}); }});
 router.put('/strategies/:id/investment/:itemId', async (req, res) => {
   svU(req, 'Invest~');
   const s = req.profile.data.find(x => x.id === req.params.id);
@@ -1198,15 +1308,21 @@ router.put('/strategies/:id/pnl/:itemId/toggle', async (req, res) => {
   res.json(s);
 });
 router.delete('/strategies/:id/:type/:itemId', async (req, res) => {
-  svU(req, 'Item del'); const s = req.profile.data.find(x => x.id === req.params.id);
-  if(req.params.type === 'rewards') s.rewards = s.rewards.filter(x => x.id !== req.params.itemId);
-  if(req.params.type === 'pnl') s.pnl = s.pnl.filter(x => x.id !== req.params.itemId);
-  await saveProfile(req); res.json({ok:1});
+  try {
+    const validTypes = ['rewards', 'pnl'];
+    if (!validTypes.includes(req.params.type)) return res.status(400).json({ error: 'Ungültiger Typ' });
+    const s = req.profile.data.find(x => x.id === req.params.id);
+    if (!s) return res.status(404).json({ error: 'Strategie nicht gefunden' });
+    svU(req, 'Item del');
+    if(req.params.type === 'rewards') s.rewards = (s.rewards||[]).filter(x => x.id !== req.params.itemId);
+    if(req.params.type === 'pnl') s.pnl = (s.pnl||[]).filter(x => x.id !== req.params.itemId);
+    await saveProfile(req); res.json({ok:1});
+  } catch(e) { console.error('item del:', e.message); res.status(500).json({error:'Fehler'}); }
 });
 
-router.post('/frf/exchanges', async (req, res) => { svU(req, 'Börse+'); const f = req.profile.frf; f.exchanges.push({id:gid(), name:req.body.name, marginHistory:[{id:gid(), amount:parseFloat(req.body.margin)||0, date:new Date().toISOString(), note:'Ersteinzahlung'}]}); await saveProfile(req); res.json(f); });
-router.delete('/frf/exchanges/:id', async (req, res) => { svU(req, 'Börse del'); const f = req.profile.frf; f.exchanges = f.exchanges.filter(x => x.id !== req.params.id); await saveProfile(req); res.json(f); });
-router.post('/frf/exchanges/:id/margin', async (req, res) => { svU(req, 'Margin+'); const f = req.profile.frf; const e = f.exchanges.find(x => x.id === req.params.id); e.marginHistory.push({id:gid(), amount:parseFloat(req.body.amount), date:new Date().toISOString(), note:req.body.note||''}); await saveProfile(req); res.json(f); });
+router.post('/frf/exchanges', async (req, res) => { try { svU(req, 'Börse+'); const f = req.profile.frf; f.exchanges.push({id:gid(), name:String(req.body.name||'').slice(0,100), marginHistory:[{id:gid(), amount:parseFloat(req.body.margin)||0, date:new Date().toISOString(), note:'Ersteinzahlung'}]}); await saveProfile(req); res.json(f); } catch(e) { console.error('exchange create:', e.message); res.status(500).json({error:'Fehler'}); }});
+router.delete('/frf/exchanges/:id', async (req, res) => { try { svU(req, 'Börse del'); const f = req.profile.frf; f.exchanges = f.exchanges.filter(x => x.id !== req.params.id); await saveProfile(req); res.json(f); } catch(e) { console.error('exchange del:', e.message); res.status(500).json({error:'Fehler'}); }});
+router.post('/frf/exchanges/:id/margin', async (req, res) => { try { const f = req.profile.frf; const e = f.exchanges.find(x => x.id === req.params.id); if(!e) return res.status(404).json({error:'Börse nicht gefunden'}); const amt = parseFloat(req.body.amount); if(isNaN(amt)) return res.status(400).json({error:'Ungültiger Betrag'}); svU(req, 'Margin+'); e.marginHistory.push({id:gid(), amount:amt, date:new Date().toISOString(), note:req.body.note||''}); await saveProfile(req); res.json(f); } catch(e) { console.error('margin:', e.message); res.status(500).json({error:'Fehler'}); }});
 router.put('/frf/exchanges/:id', async (req, res) => {
   svU(req, 'Borse~');
   const f = req.profile.frf;
@@ -1283,32 +1399,15 @@ router.put('/frf/positions/:id', async (req, res) => {
   res.json(f);
 });
 router.put('/frf/positions/:id/close', async (req, res) => {
-  svU(req, 'Pos close'); const f = req.profile.frf; const p = f.positions.find(x => x.id === req.params.id);
+  try { svU(req, 'Pos close'); const f = req.profile.frf; const p = f.positions.find(x => x.id === req.params.id);
+  if(!p) return res.status(404).json({error:'Position nicht gefunden'});
   p.endedAt = new Date().toISOString(); p.closePnlShort = parseFloat(req.body.closePnlShort)||0; p.closePnlLong = parseFloat(req.body.closePnlLong)||0; p.fees = parseFloat(req.body.fees)||0; p.closeNote = req.body.closeNote || '';
   if(p.closePnlShort !== 0 && p.shortExchangeId) { let e = f.exchanges.find(x=>x.id===p.shortExchangeId); if(e) e.marginHistory.push({id:gid(), amount:p.closePnlShort, date:p.endedAt, note:'Auto-Close PNL: '+p.token}); }
   if(p.closePnlLong !== 0 && !p.longIsSpot && p.longExchangeId) { let e = f.exchanges.find(x=>x.id===p.longExchangeId); if(e) e.marginHistory.push({id:gid(), amount:p.closePnlLong, date:p.endedAt, note:'Auto-Close PNL: '+p.token}); }
   await saveProfile(req); res.json(f);
+  } catch(e) { console.error('pos close:', e.message); res.status(500).json({error:'Fehler'}); }
 });
-router.put('/frf/positions/:id/reopen', async (req, res) => {
-  svU(req, 'Pos reopen');
-  const p = req.profile.frf.positions.find(x => x.id === req.params.id);
-  if (!p) return res.status(404).json({ error: 'Position nicht gefunden' });
-  p.endedAt = null;
-  p.closePnlShort = null;
-  p.closePnlLong = null;
-  p.closeNote = '';
-  await saveProfile(req);
-  res.json(req.profile.frf);
-});
-router.put('/frf/positions/:id/toggle', async (req, res) => {
-  svU(req, 'Toggle Pos');
-  const p = req.profile.frf.positions.find(x => x.id === req.params.id);
-  if (!p) return res.status(404).json({ error: 'Position nicht gefunden' });
-  p.excluded = p.excluded === true ? false : true;
-  await saveProfile(req);
-  res.json(req.profile.frf);
-});
-router.put('/frf/positions/:id/toggle-strategy', async (req, res) => { svU(req, 'Toggle Strat'); const p = req.profile.frf.positions.find(x => x.id === req.params.id); p.includeInStrategy = !p.includeInStrategy; await saveProfile(req); res.json(req.profile.frf); });
+router.put('/frf/positions/:id/toggle-strategy', async (req, res) => { try { svU(req, 'Toggle Strat'); const p = req.profile.frf.positions.find(x => x.id === req.params.id); if(!p) return res.status(404).json({error:'Position nicht gefunden'}); p.includeInStrategy = !p.includeInStrategy; await saveProfile(req); res.json(req.profile.frf); } catch(e) { console.error('toggle strat:', e.message); res.status(500).json({error:'Fehler'}); }});
 router.put('/frf/positions/:id/price', async (req, res) => {
   svU(req, 'Price~');
   const p = req.profile.frf.positions.find(x => x.id === req.params.id);
@@ -1318,7 +1417,7 @@ router.put('/frf/positions/:id/price', async (req, res) => {
   await saveProfile(req);
   res.json(req.profile.frf);
 });
-router.post('/frf/positions/:id/funding/:side', async (req, res) => { svU(req, 'Fund+'); const p = req.profile.frf.positions.find(x => x.id === req.params.id); const arr = req.params.side === 'short' ? p.fundingShort : p.fundingLong; arr.push({id:gid(), amount:parseFloat(req.body.amount), date:new Date().toISOString(), note:req.body.note||''}); await saveProfile(req); res.json(req.profile.frf); });
+router.post('/frf/positions/:id/funding/:side', async (req, res) => { try { const p = req.profile.frf.positions.find(x => x.id === req.params.id); if(!p) return res.status(404).json({error:'Position nicht gefunden'}); if(req.params.side!=='short'&&req.params.side!=='long') return res.status(400).json({error:'Ungültige Seite'}); const amt = parseFloat(req.body.amount); if(isNaN(amt)) return res.status(400).json({error:'Ungültiger Betrag'}); svU(req, 'Fund+'); const arr = req.params.side === 'short' ? p.fundingShort : p.fundingLong; arr.push({id:gid(), amount:amt, date:new Date().toISOString(), note:req.body.note||''}); await saveProfile(req); res.json(req.profile.frf); } catch(e) { console.error('funding add:', e.message); res.status(500).json({error:'Fehler'}); }});
 router.put('/frf/positions/:id/funding/:side/:fid', async (req, res) => {
   svU(req, 'Fund~');
   const p = req.profile.frf.positions.find(x => x.id === req.params.id);
@@ -1341,20 +1440,26 @@ router.put('/frf/positions/:id/funding/:side/:fid', async (req, res) => {
   await saveProfile(req);
   res.json(req.profile.frf);
 });
-router.delete('/frf/positions/:id/funding/:side/:fid', async (req, res) => { svU(req, 'Fund-'); const p = req.profile.frf.positions.find(x => x.id === req.params.id); if(req.params.side==='short') p.fundingShort = p.fundingShort.filter(x=>x.id!==req.params.fid); else p.fundingLong = p.fundingLong.filter(x=>x.id!==req.params.fid); await saveProfile(req); res.json(req.profile.frf); });
+router.delete('/frf/positions/:id/funding/:side/:fid', async (req, res) => { try { const p = req.profile.frf.positions.find(x => x.id === req.params.id); if(!p) return res.status(404).json({error:'Position nicht gefunden'}); svU(req, 'Fund-'); if(req.params.side==='short') p.fundingShort = (p.fundingShort||[]).filter(x=>x.id!==req.params.fid); else p.fundingLong = (p.fundingLong||[]).filter(x=>x.id!==req.params.fid); await saveProfile(req); res.json(req.profile.frf); } catch(e) { console.error('funding del:', e.message); res.status(500).json({error:'Fehler'}); }});
 // ============================================
 // SUPPORT & COMMUNITY API
 // ============================================
 app.post('/api/support', requireAuth, async (req, res) => {
   try {
-    const ok = await sendMail("tracker.support@defivault.cloud", "Support-Anfrage: " + req.body.title, "Von: " + req.account.email + "<br><br>" + req.body.message);
+    const title = escHtml(String(req.body.title || '').trim()).slice(0, 200);
+    const message = escHtml(String(req.body.message || '').trim()).replace(/\n/g, '<br>');
+    if (!title || !message) return res.status(400).json({ error: 'Titel und Nachricht erforderlich' });
+    const ok = await sendMail("tracker.support@defivault.cloud", "Support-Anfrage: " + title, "Von: " + escHtml(req.account.email) + "<br><br>" + message);
     res.json({ ok: ok ? 1 : 0 });
   } catch(e) { console.error(e); res.status(500).json({error:1}); }
 });
 
 app.post('/api/features', requireAuth, async (req, res) => {
   try {
-    await db.query('INSERT INTO feature_requests (id, account_id, title, description) VALUES ($1, $2, $3, $4)', [gid(), req.account.id, req.body.title, req.body.description]);
+    const title = String(req.body.title || '').trim().slice(0, 200);
+    const description = String(req.body.description || '').trim().slice(0, 2000);
+    if (!title || !description) return res.status(400).json({ error: 'Titel und Beschreibung erforderlich' });
+    await db.query('INSERT INTO feature_requests (id, account_id, title, description) VALUES ($1, $2, $3, $4)', [gid(), req.account.id, title, description]);
     res.json({ ok: 1 });
   } catch(e) { console.error(e); res.status(500).json({error:1}); }
 });
@@ -1434,4 +1539,32 @@ app.post('/api/features/:id/vote', requireAuth, async (req, res) => {
   } catch(e) { console.error(e); res.status(500).json({error:1}); }
 });
 
-app.listen(PORT, '0.0.0.0', () => { console.log(`🚀 DeFi Vault Server läuft auf Port ${PORT} (PostgreSQL+JWT)`); });
+// Global Error Handler - fängt unbehandelte Fehler in Express-Routen ab
+app.use((err, req, res, next) => {
+  console.error('Unhandled Express Error:', err.message, err.stack);
+  res.status(500).json({ error: 'Interner Serverfehler' });
+});
+
+// Unhandled Promise Rejections und Exceptions loggen
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Promise Rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err.message, err.stack);
+  process.exit(1);
+});
+
+// Graceful Shutdown
+const server = app.listen(PORT, '0.0.0.0', () => { console.log(`🚀 DeFi Vault Server läuft auf Port ${PORT} (PostgreSQL+JWT)`); });
+function gracefulShutdown(signal) {
+  console.log(`\n${signal} empfangen. Fahre Server herunter...`);
+  server.close(() => {
+    db.pool.end().then(() => {
+      console.log('DB-Pool geschlossen. Server beendet.');
+      process.exit(0);
+    });
+  });
+  setTimeout(() => { process.exit(1); }, 10000);
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
