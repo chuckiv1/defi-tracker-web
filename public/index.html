@@ -375,9 +375,23 @@ function loopPayloadFromForm(){
   var lev=cb>0?((endColl*cp)/cb):1;
   return {name:ct+" / "+bt,startDate:startDate,collateralToken:ct,borrowToken:bt,startCollateral:cb,collateralPrice:cp,startCollateralAmount:csm,supplyApy:sa,borrowedAmount:endBorrow,borrowApy:ba,endCollateralAmount:endColl,endBorrowedAmount:endBorrow,leverage:lev||1};
 }
-function loopNetApy(l){
-  var lev=parseFloat(l.leverage||1),sup=parseFloat(l.supplyapy||0),bor=parseFloat(l.borrowapy||0);
-  return (sup*lev)-(bor*Math.max(lev-1,0));
+function loopSupplyValue(l){
+  var price=parseFloat(l.collateralprice||0),amt=parseFloat(l.endcollateralamount||l.startcollateralamount||0);
+  return amt>0&&price>0?amt*price:0;
+}
+function loopBorrowValue(l){
+  return parseFloat(l.endborrowedamount||l.borrowedamount||0)||0;
+}
+function loopLeverage(l){
+  var equity=parseFloat(l.startcollateral||0),supplyValue=loopSupplyValue(l);
+  if(equity>0&&supplyValue>0)return supplyValue/equity;
+  return parseFloat(l.leverage||1)||1;
+}
+function loopNetApr(l){
+  var equity=parseFloat(l.startcollateral||0),sup=parseFloat(l.supplyapy||0),bor=parseFloat(l.borrowapy||0),supplyValue=loopSupplyValue(l),borrowValue=loopBorrowValue(l);
+  if(equity>0&&supplyValue>0)return (sup*(supplyValue/equity))+(bor*(borrowValue/equity));
+  var lev=loopLeverage(l);
+  return (sup*lev)+(bor*Math.max(lev-1,0));
 }
 function hLoopCr(){var payload=loopPayloadFromForm();if(!payload)return alert("Bitte alle Pflichtfelder ausfüllen.");cm();api('/api/loops',{method:'POST',body:JSON.stringify(payload)}).then(function(r){if(r.status!==200){alert((r.data&&r.data.error)||"Loop konnte nicht erstellt werden.");return;}LO.unshift({id:r.data.id,name:payload.name,startdate:payload.startDate,collateraltoken:payload.collateralToken,borrowtoken:payload.borrowToken,startcollateral:payload.startCollateral,collateralprice:payload.collateralPrice,startcollateralamount:payload.startCollateralAmount,supplyapy:payload.supplyApy,borrowapy:payload.borrowApy,borrowedamount:payload.borrowedAmount,endcollateralamount:payload.endCollateralAmount,endborrowedamount:payload.endBorrowedAmount,leverage:payload.leverage,status:'active'});R();loadLoops();}).catch(()=>{});}
 function openLoopEdit(id){var l=LO.find(function(x){return x.id===id});if(!l)return;M.led=l;M.lpm=0;R();}
@@ -858,17 +872,17 @@ function R() {
       var activeL=LO.filter(l=>l.status==='active'||!l.status);
       var closedL=LO.filter(l=>l.status==='closed');
       var totalCollat=activeL.reduce((s,l)=>s+parseFloat(l.startcollateral||0),0);
-      var avgLeverage=activeL.length>0?activeL.reduce((s,l)=>s+parseFloat(l.leverage||1),0)/activeL.length:0;
-      var netApr=activeL.length>0?activeL.reduce((s,l)=>s+loopNetApy(l),0)/activeL.length:0;
+      var avgLeverage=activeL.length>0?activeL.reduce((s,l)=>s+loopLeverage(l),0)/activeL.length:0;
+      var netApr=activeL.length>0?activeL.reduce((s,l)=>s+loopNetApr(l),0)/activeL.length:0;
       h+='<div class="sm"><div class="sc"><span class="sl">Aktive Loops</span><span class="sv">'+activeL.length+'</span></div><div class="sc"><span class="sl">Gesamt Collateral</span><span class="sv">'+fn(totalCollat)+' <span class="u">USDC</span></span></div><div class="sc"><span class="sl">Ø Hebel</span><span class="sv">'+avgLeverage.toFixed(1)+'x</span></div><div class="sc"><span class="sl">Netto APR</span><span class="sv '+(netApr>0?'g':(netApr<0?'r':''))+'">'+((netApr>0)?'+':'')+netApr.toFixed(2)+'%</span></div></div>';
       h+='<div class="sh"><h2 class="st">Aktive Loops</h2><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="bt bp" onclick="M.lcr=1;R()"><span style="font-size:17px">+</span> Neuer Loop</button></div></div>';
       if(!activeL.length)h+='<div class="emp">Keine aktiven Loops.</div>';
       else{
         activeL.forEach(function(l){
-          var lev=parseFloat(l.leverage||1);
+          var lev=loopLeverage(l);
           var supAPY=parseFloat(l.supplyapy||0);
           var borAPY=parseFloat(l.borrowapy||0);
-          var netAPY=loopNetApy(l);
+          var netAPR=loopNetApr(l);
           var runtimeDays=db(l.startdate,nw);
           var sc=parseFloat(l.startcollateral||0);
           var startAmount=parseFloat(l.startcollateralamount||0);
@@ -886,7 +900,7 @@ function R() {
           h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">';
           h+='<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:6px"><div style="font-size:10px;color:var(--t4)">Supply APY</div><div style="font-size:14px;font-weight:600;color:'+(supAPY>0?'var(--g)':(supAPY<0?'var(--r)':'var(--t2)'))+'">'+(supAPY>0?'+':'')+supAPY.toFixed(2)+'%</div></div>';
           h+='<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:6px"><div style="font-size:10px;color:var(--t4)">Borrow APY</div><div style="font-size:14px;font-weight:600;color:'+(borAPY>0?'var(--g)':(borAPY<0?'var(--r)':'var(--t2)'))+'">'+(borAPY>0?'+':'')+borAPY.toFixed(2)+'%</div></div>';
-          h+='<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:6px"><div style="font-size:10px;color:var(--t4)">Gehebelte APY</div><div style="font-size:14px;font-weight:600;color:'+(netAPY>0?'var(--g)':(netAPY<0?'var(--r)':'var(--t2)'))+'">'+(netAPY>0?'+':'')+netAPY.toFixed(2)+'%</div></div>';
+          h+='<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:6px"><div style="font-size:10px;color:var(--t4)">Gehebelte APR</div><div style="font-size:14px;font-weight:600;color:'+(netAPR>0?'var(--g)':(netAPR<0?'var(--r)':'var(--t2)'))+'">'+(netAPR>0?'+':'')+netAPR.toFixed(2)+'%</div></div>';
           h+='</div>';
           h+='<div class="cdf"><button class="bt bb" onclick="event.stopPropagation();openLoopEdit(\''+l.id+'\')">Bearbeiten</button><button class="bt be" onclick="event.stopPropagation();closeLoop(\''+l.id+'\')">Schließen</button></div>';
           h+='</div></div>';
