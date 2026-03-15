@@ -1,6 +1,7 @@
 const benqiProvider = require('./providers/benqi');
+const aaveProvider = require('./providers/aave');
 
-const providers = [benqiProvider];
+const providers = [benqiProvider, aaveProvider];
 
 function normAsset(v) {
   return String(v || '').trim().toUpperCase();

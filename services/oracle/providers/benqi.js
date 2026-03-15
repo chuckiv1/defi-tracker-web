@@ -23,6 +23,7 @@ async function fetchOracleData() {
       asset: 'sAVAX',
       protocol: 'Benqi',
       type: 'SUPPLY',
+      rateKind: 'APR',
       value: aprRaw * 100,
       timestamp
     }];
