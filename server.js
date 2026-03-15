@@ -137,6 +137,7 @@ function normalizeExchangeProvider(name) {
   if (value.includes('extended')) return 'extended';
   if (value.includes('hyperliquid') || value === 'hl') return 'hyperliquid';
   if (value.includes('variational') || value.includes('omni')) return 'variational';
+  if (value.includes('phemex')) return 'phemex';
   if (value.includes('bybit')) return 'bybit';
   return null;
 }
@@ -287,6 +288,70 @@ async function getBybitPerpMarkets() {
   }));
   return cacheSet('bybit_perp_markets', items);
 }
+async function getPhemexSpotMarkets() {
+  const cached = cacheGet('phemex_spot_markets');
+  if (cached) return cached;
+  const payload = await fetchJson('https://api.phemex.com/public/products');
+  const rows = payload && payload.data && Array.isArray(payload.data.products) ? payload.data.products : [];
+  const items = rows.filter(row => row && row.type === 'Spot' && row.status === 'Listed' && ['USDT', 'USDC', 'USD'].includes(String(row.quoteCurrency || '').toUpperCase())).map(row => ({
+    symbol: String(row.baseCurrency || '').toUpperCase(),
+    market: String(row.symbol || '').toUpperCase(),
+    quote: String(row.quoteCurrency || '').toUpperCase(),
+    label: `${String(row.baseCurrency || '').toUpperCase()} / ${String(row.quoteCurrency || '').toUpperCase()}`
+  }));
+  return cacheSet('phemex_spot_markets', items);
+}
+async function getPhemexPerpMarkets() {
+  const cached = cacheGet('phemex_perp_markets');
+  if (cached) return cached;
+  const payload = await fetchJson('https://api.phemex.com/public/products');
+  const rowsV2 = payload && payload.data && Array.isArray(payload.data.perpProductsV2) ? payload.data.perpProductsV2 : [];
+  const rowsLegacy = payload && payload.data && Array.isArray(payload.data.products) ? payload.data.products : [];
+  const v2Items = rowsV2.filter(row => row && String(row.status || '') === 'Listed' && ['USDT', 'USDC'].includes(String(row.quoteCurrency || '').toUpperCase())).map(row => ({
+    symbol: String(row.baseCurrency || '').toUpperCase(),
+    market: String(row.symbol || '').toUpperCase(),
+    quote: String(row.quoteCurrency || '').toUpperCase(),
+    label: `${String(row.baseCurrency || '').toUpperCase()} perpetual ${String(row.quoteCurrency || '').toUpperCase()}`
+  }));
+  const legacyItems = rowsLegacy.filter(row => row && String(row.type || '') === 'Perpetual' && String(row.status || '') === 'Listed' && ['USD'].includes(String(row.quoteCurrency || '').toUpperCase())).map(row => ({
+    symbol: String(String(row.displaySymbol || row.symbol || '').replace(/\s*\/.*$/, '') || '').replace(/^c/, '').toUpperCase(),
+    market: String(row.symbol || '').toUpperCase(),
+    quote: String(row.quoteCurrency || '').toUpperCase(),
+    label: `${String(String(row.displaySymbol || row.symbol || '').replace(/\s+/g, ' ').trim() || row.symbol || '').replace(/^c/, '')} perpetual`
+  })).filter(item => item.symbol && item.market);
+  return cacheSet('phemex_perp_markets', uniqueBy([...v2Items, ...legacyItems], row => row.market));
+}
+async function searchPhemexSymbols(query) {
+  const q = normalizeLookupSymbol(query, 30);
+  const [spot, perp] = await Promise.all([getPhemexSpotMarkets(), getPhemexPerpMarkets()]);
+  const merged = uniqueBy([...perp, ...spot].sort((a, b) => preferUsdQuote(a.quote, b.quote)), row => row.symbol + ':' + row.quote);
+  return merged.map(row => ({ ...row, rank: Math.min(rankLookup(row.symbol, q), rankLookup(row.market, q), rankLookup(row.label, q)) }))
+    .filter(row => !q || row.rank < 9)
+    .sort((a, b) => a.rank !== b.rank ? a.rank - b.rank : preferUsdQuote(a.quote, b.quote) || a.symbol.localeCompare(b.symbol))
+    .slice(0, 12);
+}
+async function resolvePhemexMarket(token, mode) {
+  const normalized = normalizeLookupSymbol(token, 24);
+  if (!normalized) throw new Error('Ungueltiges Phemex-Symbol');
+  const rows = mode === 'spot' ? await getPhemexSpotMarkets() : await getPhemexPerpMarkets();
+  const market = rows.map(row => ({ ...row, rank: Math.min(rankLookup(row.market, normalized), rankLookup(row.symbol, normalized)) }))
+    .filter(row => row.rank < 9)
+    .sort((a, b) => a.rank !== b.rank ? a.rank - b.rank : preferUsdQuote(a.quote, b.quote) || a.market.localeCompare(b.market))[0];
+  if (!market) throw new Error(`Phemex-Markt fuer ${normalized} nicht gefunden`);
+  return market;
+}
+async function getPhemexQuote(token, mode, exchangeName) {
+  const market = await resolvePhemexMarket(token, mode);
+  const path = mode === 'spot' ? `https://api.phemex.com/md/spot/ticker/24hr?symbol=${encodeURIComponent(market.market)}` : `https://api.phemex.com/md/v2/ticker/24hr?symbol=${encodeURIComponent(market.market)}`;
+  const payload = await fetchJson(path);
+  const row = payload && payload.result ? payload.result : null;
+  if (!row) throw new Error(`Phemex-Ticker fuer ${market.market} nicht gefunden`);
+  const price = mode === 'spot' ? (parseFloat(row.lastEp) || 0) / 1e8 : parseFloat(row.markPriceRp) || parseFloat(row.closeRp) || 0;
+  const reference = mode === 'spot' ? (parseFloat(row.indexEp) || 0) / 1e8 : parseFloat(row.indexPriceRp) || 0;
+  const bid = mode === 'spot' ? (parseFloat(row.bidEp) || 0) / 1e8 : 0;
+  const ask = mode === 'spot' ? (parseFloat(row.askEp) || 0) / 1e8 : 0;
+  return buildQuotePayload('phemex', exchangeName, market.market, market.symbol, price, reference, bid, ask, mode, mode === 'spot' ? 'Phemex spot ticker' : 'Phemex perp ticker');
+}
 async function searchBybitSymbols(query) {
   const q = normalizeLookupSymbol(query, 30);
   const [spot, perp] = await Promise.all([getBybitSpotMarkets(), getBybitPerpMarkets()]);
@@ -319,9 +384,9 @@ async function getBybitQuote(token, mode, exchangeName) {
 async function getVariationalCandidates() {
   const cached = cacheGet('variational_candidates');
   if (cached) return cached;
-  const [extended, hyperliquid, bybitSpot, bybitPerp] = await Promise.all([getExtendedMarkets(), getHyperliquidUniverse(), getBybitSpotMarkets(), getBybitPerpMarkets()]);
+  const [extended, hyperliquid, bybitSpot, bybitPerp, phemexSpot, phemexPerp] = await Promise.all([getExtendedMarkets(), getHyperliquidUniverse(), getBybitSpotMarkets(), getBybitPerpMarkets(), getPhemexSpotMarkets(), getPhemexPerpMarkets()]);
   const set = new Set();
-  [...extended, ...hyperliquid, ...bybitSpot, ...bybitPerp].forEach(row => { if (row && row.symbol) set.add(String(row.symbol).toUpperCase()); });
+  [...extended, ...hyperliquid, ...bybitSpot, ...bybitPerp, ...phemexSpot, ...phemexPerp].forEach(row => { if (row && row.symbol) set.add(String(row.symbol).toUpperCase()); });
   ['BTC', 'ETH', 'SOL', 'AVAX', 'ARB', 'DOGE', 'XRP', 'SUI', 'BNB', 'HYPE'].forEach(symbol => set.add(symbol));
   return cacheSet('variational_candidates', [...set].filter(symbol => /^[A-Z0-9._-]{2,20}$/.test(symbol)).sort(), VARIATIONAL_DISCOVERY_TTL_MS);
 }
@@ -453,6 +518,7 @@ async function searchSymbolsForExchange(exchangeName, query) {
   if (provider === 'extended') return { provider, items: await searchExtendedMarkets(query) };
   if (provider === 'hyperliquid') return { provider, items: await searchHyperliquidSymbols(query) };
   if (provider === 'variational') return { provider, items: await searchVariationalSymbols(query) };
+  if (provider === 'phemex') return { provider, items: await searchPhemexSymbols(query) };
   return { provider, items: await searchBybitSymbols(query) };
 }
 async function getExchangeQuote(exchangeName, token, mode) {
@@ -461,12 +527,17 @@ async function getExchangeQuote(exchangeName, token, mode) {
   if (provider === 'extended') return getExtendedQuote(token, mode, exchangeName);
   if (provider === 'hyperliquid') return getHyperliquidQuote(token, mode, exchangeName);
   if (provider === 'variational') return getVariationalQuote(token, mode, exchangeName);
+  if (provider === 'phemex') return getPhemexQuote(token, mode, exchangeName);
   return getBybitQuote(token, mode, exchangeName);
 }
 async function getFrfSpotFallback(token, shortExchangeName, shortQuote) {
+  if (normalizeExchangeProvider(shortExchangeName) === 'phemex') {
+    try { return await getPhemexQuote(token, 'spot', `${shortExchangeName} Spot`); } catch (error) {}
+  }
   if (normalizeExchangeProvider(shortExchangeName) === 'bybit') {
     try { return await getBybitQuote(token, 'spot', `${shortExchangeName} Spot`); } catch (error) {}
   }
+  try { return await getPhemexQuote(token, 'spot', 'Phemex Spot'); } catch (error) {}
   try { return await getBybitQuote(token, 'spot', 'Bybit Spot'); } catch (error) {}
   if (shortQuote) return { ...shortQuote, exchangeName: 'Spot-Fallback', sourceLabel: 'Short-Markt als Spot-Fallback' };
   throw new Error('Kein Spot-Livepreis verfuegbar');
