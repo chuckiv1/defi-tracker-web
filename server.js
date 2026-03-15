@@ -8,6 +8,7 @@ const jwt = require('jsonwebtoken');
 const ExcelJS = require('exceljs');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const WSClient = typeof WebSocket !== 'undefined' ? WebSocket : require('ws');
 const db = require('./db');
 const fs = require('fs');
 const oracle = require('./services/oracle/aggregator');
@@ -134,7 +135,7 @@ async function fetchJson(url, options = {}) {
 function normalizeExchangeProvider(name) {
   const value = String(name || '').trim().toLowerCase();
   if (!value) return null;
-  if (value.includes('extended')) return 'extended';
+  if (value.includes('extended') || value.includes('extendet')) return 'extended';
   if (value.includes('hyperliquid') || value === 'hl') return 'hyperliquid';
   if (value.includes('variational') || value.includes('omni')) return 'variational';
   if (value.includes('phemex')) return 'phemex';
@@ -167,6 +168,22 @@ function uniqueBy(items, keyFn) {
     seen.set(key, item);
   });
   return [...seen.values()];
+}
+function wsListen(socket, event, handler) {
+  if (socket && typeof socket.addEventListener === 'function') {
+    socket.addEventListener(event, handler);
+    return;
+  }
+  if (socket && typeof socket.on === 'function') {
+    socket.on(event, arg => {
+      if (event === 'message') {
+        const data = typeof arg === 'string' ? arg : (arg && arg.data !== undefined ? arg.data : arg);
+        handler({ data: typeof data === 'string' ? data : data.toString() });
+        return;
+      }
+      handler(arg);
+    });
+  }
 }
 function profileExchangeById(profile, exchangeId) {
   if (!profile || !profile.frf || !Array.isArray(profile.frf.exchanges)) return null;
@@ -387,14 +404,14 @@ async function getVariationalCandidates() {
   const [extended, hyperliquid, bybitSpot, bybitPerp, phemexSpot, phemexPerp] = await Promise.all([getExtendedMarkets(), getHyperliquidUniverse(), getBybitSpotMarkets(), getBybitPerpMarkets(), getPhemexSpotMarkets(), getPhemexPerpMarkets()]);
   const set = new Set();
   [...extended, ...hyperliquid, ...bybitSpot, ...bybitPerp, ...phemexSpot, ...phemexPerp].forEach(row => { if (row && row.symbol) set.add(String(row.symbol).toUpperCase()); });
-  ['BTC', 'ETH', 'SOL', 'AVAX', 'ARB', 'DOGE', 'XRP', 'SUI', 'BNB', 'HYPE'].forEach(symbol => set.add(symbol));
+  ['BTC', 'ETH', 'SOL', 'AVAX', 'ARB', 'DOGE', 'XRP', 'SUI', 'BNB', 'HYPE', 'LTC', 'VVV', 'GOAT', '4'].forEach(symbol => set.add(symbol));
   return cacheSet('variational_candidates', [...set].filter(symbol => /^[A-Z0-9._-]{2,20}$/.test(symbol)).sort(), VARIATIONAL_DISCOVERY_TTL_MS);
 }
 function probeVariationalBatch(symbols) {
   return new Promise((resolve, reject) => {
     const found = new Set();
     const unsupported = new Set();
-    const socket = new WebSocket('wss://omni-ws-server.prod.ap-northeast-1.variational.io/prices');
+    const socket = new WSClient('wss://omni-ws-server.prod.ap-northeast-1.variational.io/prices');
     const timeout = setTimeout(() => {
       try { socket.close(); } catch (error) {}
       resolve({ found: [...found], unsupported: [...unsupported] });
@@ -404,7 +421,7 @@ function probeVariationalBatch(symbols) {
       try { socket.close(); } catch (error) {}
       resolve(value);
     }
-    socket.addEventListener('open', () => {
+    wsListen(socket, 'open', () => {
       socket.send(JSON.stringify({
         action: 'subscribe',
         instruments: symbols.map(symbol => ({
@@ -415,7 +432,7 @@ function probeVariationalBatch(symbols) {
         }))
       }));
     });
-    socket.addEventListener('message', event => {
+    wsListen(socket, 'message', event => {
       const raw = String(event.data || '');
       if (!raw || raw.includes('heartbeat')) return;
       if (raw.startsWith('unsupported instrument: P-')) {
@@ -428,7 +445,7 @@ function probeVariationalBatch(symbols) {
       }
       if (found.size + unsupported.size >= symbols.length) finish({ found: [...found], unsupported: [...unsupported] });
     });
-    socket.addEventListener('error', error => {
+    wsListen(socket, 'error', error => {
       clearTimeout(timeout);
       reject(error);
     });
@@ -467,7 +484,7 @@ async function getVariationalQuote(token, mode, exchangeName) {
   const normalized = normalizeLookupSymbol(token, 20);
   if (!normalized) throw new Error('Ungueltiges Variational-Symbol');
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket('wss://omni-ws-server.prod.ap-northeast-1.variational.io/prices');
+    const socket = new WSClient('wss://omni-ws-server.prod.ap-northeast-1.variational.io/prices');
     let done = false;
     const timeout = setTimeout(() => {
       if (done) return;
@@ -483,13 +500,13 @@ async function getVariationalQuote(token, mode, exchangeName) {
       if (error) reject(error);
       else resolve(value);
     }
-    socket.addEventListener('open', () => {
+    wsListen(socket, 'open', () => {
       socket.send(JSON.stringify({
         action: 'subscribe',
         instruments: [{ underlying: normalized, instrument_type: 'perpetual_future', settlement_asset: 'USDC', funding_interval_s: 3600 }]
       }));
     });
-    socket.addEventListener('message', event => {
+    wsListen(socket, 'message', event => {
       const raw = String(event.data || '');
       if (!raw || raw.includes('heartbeat')) return;
       if (raw.startsWith('unsupported instrument: P-')) {
@@ -508,8 +525,8 @@ async function getVariationalQuote(token, mode, exchangeName) {
         finish(new Error(raw));
       }
     });
-    socket.addEventListener('error', () => finish(new Error('Variational-WebSocket konnte nicht verbunden werden')));
-    socket.addEventListener('close', () => { if (!done) finish(new Error('Variational-WebSocket wurde zu frueh geschlossen')); });
+    wsListen(socket, 'error', () => finish(new Error('Variational-WebSocket konnte nicht verbunden werden')));
+    wsListen(socket, 'close', () => { if (!done) finish(new Error('Variational-WebSocket wurde zu frueh geschlossen')); });
   });
 }
 async function searchSymbolsForExchange(exchangeName, query) {
