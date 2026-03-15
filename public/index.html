@@ -404,8 +404,10 @@ function loopPayloadFromForm(){
 }
 function loopTokenPrice(sym,fallback){var key=(sym||'').toUpperCase(),px=parseFloat(PRICES[key]||0),fb=parseFloat(fallback||0);if(px>0)return px;if(STABLE_PRICES[key])return STABLE_PRICES[key];return fb>0?fb:0}
 function calculateLoopingTotals(l){
-  var equity=parseFloat(l.startCollateral||l.startcollateral||0),collatAmt=parseFloat(l.endCollateralAmount||l.endcollateralamount||l.startCollateralAmount||l.startcollateralamount||0),borrowTokenAmt=parseFloat(l.endBorrowedAmount||l.endborrowedamount||l.borrowedAmount||l.borrowedamount||0)||0,collToken=l.collateralToken||l.collateraltoken||'',borrowToken=l.borrowToken||l.borrowtoken||'',collPrice=loopTokenPrice(collToken, l.collateralPrice||l.collateralprice),supSrc=parseFloat(l.supplyApy||l.supplyapy||0),borSrc=Math.abs(parseFloat(l.borrowApy||l.borrowapy||0)||0),sup=normalizeLoopRateToApr(supSrc,loopRateKind('supply',collToken)),bor=normalizeLoopRateToApr(borSrc,loopRateKind('borrow',borrowToken)),borrowPrice=loopTokenPrice(borrowToken, borrowToken&&borrowToken.toUpperCase()===(collToken||'').toUpperCase()?collPrice:0),borrowUsd=borrowPrice>0?borrowTokenAmt*borrowPrice:0,lev=equity>0?1+(borrowUsd/equity):(parseFloat(l.leverage||0)||1),supplyUsd=equity>0?equity+borrowUsd:(collatAmt>0&&collPrice>0?collatAmt*collPrice:0),netApr=(lev*sup)-(Math.max(lev-1,0)*bor);
-  return {equity:equity,price:collPrice,borrowPrice:borrowPrice,collateralAmount:collatAmt,supplyUsd:supplyUsd,borrowUsd:borrowUsd,borrowTokenAmount:borrowTokenAmt,leverage:lev||1,netApr:netApr,supplyRateApr:sup,borrowRateApr:bor,supplyRateInput:supSrc,borrowRateInput:borSrc,supplyRateKind:loopRateKind('supply',collToken),borrowRateKind:loopRateKind('borrow',borrowToken)};
+  var equity=parseFloat(l.startCollateral||l.startcollateral||0),collatAmtInput=parseFloat(l.endCollateralAmount||l.endcollateralamount||l.startCollateralAmount||l.startcollateralamount||0),borrowTokenAmtInput=parseFloat(l.endBorrowedAmount||l.endborrowedamount||l.borrowedAmount||l.borrowedamount||0)||0,collToken=l.collateralToken||l.collateraltoken||'',borrowToken=l.borrowToken||l.borrowtoken||'',levInput=parseFloat(l.leverage||0)||0,collPrice=loopTokenPrice(collToken,l.collateralPrice||l.collateralprice),supSrc=parseFloat(l.supplyApy||l.supplyapy||0),borSrc=Math.abs(parseFloat(l.borrowApy||l.borrowapy||0)||0),sup=normalizeLoopRateToApr(supSrc,loopRateKind('supply',collToken)),bor=normalizeLoopRateToApr(borSrc,loopRateKind('borrow',borrowToken)),borrowPrice=loopTokenPrice(borrowToken,borrowToken&&borrowToken.toUpperCase()===(collToken||'').toUpperCase()?collPrice:0),borrowUsd=borrowPrice>0&&borrowTokenAmtInput>0?borrowTokenAmtInput*borrowPrice:0;
+  if(!(borrowUsd>0)&&equity>0&&levInput>1)borrowUsd=equity*(levInput-1);
+  var lev=equity>0&&borrowUsd>0?1+(borrowUsd/equity):(levInput>0?levInput:1),supplyUsd=equity>0?equity*Math.max(lev,1):(collatAmtInput>0&&collPrice>0?collatAmtInput*collPrice:0),borrowTokenAmt=borrowTokenAmtInput>0?borrowTokenAmtInput:(borrowPrice>0&&borrowUsd>0?borrowUsd/borrowPrice:0),collatAmt=collPrice>0&&supplyUsd>0?supplyUsd/collPrice:collatAmtInput,netApr=(Math.max(lev,1)*sup)-(Math.max(Math.max(lev,1)-1,0)*bor);
+  return {equity:equity,price:collPrice,borrowPrice:borrowPrice,collateralAmount:collatAmt,supplyUsd:supplyUsd,borrowUsd:borrowUsd,borrowTokenAmount:borrowTokenAmt,leverage:Math.max(lev,1),netApr:netApr,supplyRateApr:sup,borrowRateApr:bor,supplyRateInput:supSrc,borrowRateInput:borSrc,supplyRateKind:loopRateKind('supply',collToken),borrowRateKind:loopRateKind('borrow',borrowToken)};
 }
 function loopSupplyValue(l){return calculateLoopingTotals(l).supplyUsd}
 function loopBorrowValue(l){return calculateLoopingTotals(l).borrowUsd}
@@ -904,12 +906,12 @@ function R() {
       if(!activeL.length)h+='<div class="emp">Keine aktiven Loops.</div>';
       else{
         activeCalc.forEach(function(entry){
-          var l=entry.loop,tot=entry.totals,lev=tot.leverage,supAPY=parseFloat(l.supplyapy||0),borAPY=Math.abs(parseFloat(l.borrowapy||0)),netAPR=tot.netApr;
+          var l=entry.loop,tot=entry.totals,lev=tot.leverage,supAPR=tot.supplyRateApr,borAPR=tot.borrowRateApr,netAPR=tot.netApr;
           var runtimeDays=db(l.startdate,nw);
           var sc=parseFloat(l.startcollateral||0);
           var startAmount=parseFloat(l.startcollateralamount||0);
           var startPrice=tot.price;
-          var ce=parseFloat(l.endcollateralamount||l.startcollateralamount||0);
+          var ce=tot.collateralAmount;
           var borrowUsd=tot.borrowUsd;
           var borrowTokenAmt=tot.borrowTokenAmount;
           h+='<div class="cd" style="margin-bottom:16px">';
@@ -921,8 +923,8 @@ function R() {
           h+='<div style="background:var(--r-bg);padding:10px;border-radius:6px;border:1px solid var(--r)"><div style="font-size:10px;color:var(--r);text-transform:uppercase">Borrow</div><div style="font-size:14px;font-weight:600;color:var(--t)">'+fn(borrowTokenAmt)+' '+es(l.borrowtoken||l.collateraltoken)+'</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Wert: '+fn(borrowUsd)+' USDC</div></div>';
           h+='</div>';
           h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">';
-          h+='<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:6px"><div style="font-size:10px;color:var(--t4)">Supply '+tot.supplyRateKind+'</div><div style="font-size:14px;font-weight:600;color:'+(supAPY>0?'var(--g)':(supAPY<0?'var(--r)':'var(--t2)'))+'">'+(supAPY>0?'+':'')+supAPY.toFixed(2)+'%</div></div>';
-          h+='<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:6px"><div style="font-size:10px;color:var(--t4)">Borrow '+tot.borrowRateKind+'</div><div style="font-size:14px;font-weight:600;color:'+(borAPY>0?'var(--r)':'var(--t2)')+'">'+(borAPY>0?'-':'')+borAPY.toFixed(2)+'%</div></div>';
+          h+='<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:6px"><div style="font-size:10px;color:var(--t4)">Supply APR</div><div style="font-size:14px;font-weight:600;color:'+(supAPR>0?'var(--g)':(supAPR<0?'var(--r)':'var(--t2)'))+'">'+(supAPR>0?'+':'')+supAPR.toFixed(2)+'%</div></div>';
+          h+='<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:6px"><div style="font-size:10px;color:var(--t4)">Borrow APR</div><div style="font-size:14px;font-weight:600;color:'+(borAPR>0?'var(--r)':'var(--t2)')+'">'+(borAPR>0?'-':'')+borAPR.toFixed(2)+'%</div></div>';
           h+='<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:6px"><div style="font-size:10px;color:var(--t4)">Gehebelte APR</div><div style="font-size:14px;font-weight:600;color:'+(netAPR>0?'var(--g)':(netAPR<0?'var(--r)':'var(--t2)'))+'">'+(netAPR>0?'+':'')+netAPR.toFixed(2)+'%</div></div>';
           h+='</div>';
           h+='<div class="cdf"><button class="bt bb" onclick="event.stopPropagation();openLoopEdit(\''+l.id+'\')">Bearbeiten</button><button class="bt be" onclick="event.stopPropagation();closeLoop(\''+l.id+'\')">Schließen</button></div>';
