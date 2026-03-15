@@ -1382,7 +1382,7 @@ router.delete('/frf/exchanges/:id/margin/:mid', async (req, res) => {
 
 router.post('/frf/positions', async (req, res) => {
   svU(req, 'Pos+'); const f = req.profile.frf;
-  f.positions.push({id:gid(), type:req.body.type, token:req.body.token, coingeckoId:req.body.coingeckoId||'', tokenAmount:parseFloat(req.body.tokenAmount)||0, positionSizeUsd:parseFloat(req.body.positionSizeUsd)||0, entryPriceShort:parseFloat(req.body.entryPriceShort)||0, entryPriceLong:parseFloat(req.body.entryPriceLong)||0, shortExchangeId:req.body.shortExchangeId, longExchangeId:req.body.longExchangeId, longIsSpot:req.body.longIsSpot, fees:parseFloat(req.body.fees)||0, linkedStrategyId:req.body.linkedStrategyId||'', linkedLoopId:req.body.linkedLoopId||'', startDate:req.body.startDate||new Date().toISOString(), endedAt:null, closePnlShort:null, closePnlLong:null, closeNote:'', manualPrice:0, useManualPrice:false, includeInStrategy:false, includeInLoop:false, excluded:false, fundingShort:[], fundingLong:[]});
+  f.positions.push({id:gid(), type:req.body.type, token:req.body.token, coingeckoId:req.body.coingeckoId||'', tokenAmount:parseFloat(req.body.tokenAmount)||0, positionSizeUsd:parseFloat(req.body.positionSizeUsd)||0, entryPriceShort:parseFloat(req.body.entryPriceShort)||0, entryPriceLong:parseFloat(req.body.entryPriceLong)||0, shortExchangeId:req.body.shortExchangeId, longExchangeId:req.body.longExchangeId, longIsSpot:req.body.longIsSpot, fees:parseFloat(req.body.fees)||0, linkedStrategyId:req.body.linkedStrategyId||'', linkedLoopId:req.body.linkedLoopId||'', startDate:req.body.startDate||new Date().toISOString(), endedAt:null, closePnlShort:null, closePnlLong:null, closeNote:'', manualPrice:0, useManualPrice:false, includeInStrategy:false, excluded:false, fundingShort:[], fundingLong:[]});
   await saveProfile(req); res.json(f);
 });
 router.delete('/frf/positions/:id', async (req, res) => { svU(req, 'Pos del'); const f = req.profile.frf; f.positions = f.positions.filter(x => x.id !== req.params.id); await saveProfile(req); res.json(f); });
@@ -1421,7 +1421,6 @@ router.put('/frf/positions/:id/close', async (req, res) => {
   } catch(e) { console.error('pos close:', e.message); res.status(500).json({error:'Fehler'}); }
 });
 router.put('/frf/positions/:id/toggle-strategy', async (req, res) => { try { svU(req, 'Toggle Strat'); const p = req.profile.frf.positions.find(x => x.id === req.params.id); if(!p) return res.status(404).json({error:'Position nicht gefunden'}); p.includeInStrategy = !p.includeInStrategy; await saveProfile(req); res.json(req.profile.frf); } catch(e) { console.error('toggle strat:', e.message); res.status(500).json({error:'Fehler'}); }});
-router.put('/frf/positions/:id/toggle-loop', async (req, res) => { try { svU(req, 'Toggle Loop'); const p = req.profile.frf.positions.find(x => x.id === req.params.id); if(!p) return res.status(404).json({error:'Position nicht gefunden'}); p.includeInLoop = !p.includeInLoop; await saveProfile(req); res.json(req.profile.frf); } catch(e) { console.error('toggle loop:', e.message); res.status(500).json({error:'Fehler'}); }});
 router.put('/frf/positions/:id/price', async (req, res) => {
   svU(req, 'Price~');
   const p = req.profile.frf.positions.find(x => x.id === req.params.id);
