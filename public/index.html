@@ -182,7 +182,7 @@ function loopOracleCfg(kind,token){kind=kind==='borrow'?'BORROW':'SUPPLY';token=
 function loopRateKind(kind,token){var cfg=loopOracleCfg(kind,token);return cfg&&cfg.rateKind?cfg.rateKind:'APR'}
 function apyToApr(v){var n=365,r=(parseFloat(v||0)||0)/100;if(r<=-1)return-100;return (((Math.pow(1+r,1/n)-1)*n)*100)}
 function normalizeLoopRateToApr(v,kind){var num=parseFloat(v||0)||0;return kind==='APY'?apyToApr(num):num}
-function loopRateLabel(kind,token){var base=kind==='borrow'?'Borrow':'Supply';return base+' '+loopRateKind(kind,token)+' (%)'}
+function loopRateLabel(kind,token){var base=kind==='borrow'?'Borrow':'Supply';return base+' APR (%)'}
 function updateLoopRateLabels(){var ct=document.getElementById('f-lct')?.value||'',bt=document.getElementById('f-lbt')?.value||'',sl=document.getElementById('f-lsa-lbl'),bl=document.getElementById('f-lba-lbl');if(sl)sl.textContent=loopRateLabel('supply',ct);if(bl)bl.textContent=loopRateLabel('borrow',bt)}
 function fetchLoopOracleDefaults(kind){
   kind=kind==='borrow'?'borrow':'supply';
@@ -194,7 +194,8 @@ function fetchLoopOracleDefaults(kind){
   api('/api/oracle/lookup?asset='+encodeURIComponent(cfg.asset||token)+'&protocol='+encodeURIComponent(cfg.protocol)+'&type='+encodeURIComponent(cfg.type)).then(function(r){
     if(reqId!==LOOP_ORACLE_REQ||r.status!==200||!Array.isArray(r.data)||!r.data.length)return;
     var row=r.data[0],input=document.getElementById(kind==='borrow'?'f-lba':'f-lsa');
-    if(input&&Number.isFinite(parseFloat(row.value))){input.value=(Math.round(parseFloat(row.value)*100)/100).toFixed(2);calcLoopData();}
+    var aprValue=normalizeLoopRateToApr(row&&row.value,row&&row.rateKind?row.rateKind:(cfg&&cfg.rateKind?cfg.rateKind:'APR'));
+    if(input&&Number.isFinite(parseFloat(aprValue))){input.value=(Math.round(parseFloat(aprValue)*100)/100).toFixed(2);calcLoopData();}
   }).catch(function(){})
 }
 
