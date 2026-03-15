@@ -69,6 +69,7 @@ var PG_ACT=1, PG_PAST=1, PG_FRFO=1, PG_FRFC=1, PG_LOOP=1;
 var SEARCH_ACT="", SEARCH_PAST="", SEARCH_FRF="", SEARCH_LOOP="", ITEMS_PER_PAGE=12;
 var IS_DEMO = false;
 var ROLE_ORDER=['user','support','admin','owner'];
+var STABLE_PRICES={USDC:1,USDT:1,DAI:1,USDE:1,FDUSD:1,'USDC.E':1};
 
 function setPgAct(p){PG_ACT=p;R()}
 function setPgPast(p){PG_PAST=p;R()}
@@ -165,11 +166,11 @@ function canManageAllRoles(){return AUTH.account&&hasRole(AUTH.account.role,'own
 function roleBadge(r){var rr=(r||'user').toLowerCase(),cls=rr==='owner'?'ac':(rr==='admin'?'frf':(rr==='support'?'hdg':'en'));return'<span class="bdg '+cls+'">'+es(rr)+'</span>'}
 
 function fetchPrices(){
-  var tokens={};FR.positions.forEach(p=>{if(!p.endedAt&&p.token){var id=CG_REV[p.token.toUpperCase()]||p.coingeckoId;if(id)tokens[p.token.toUpperCase()]=id}});
+  var tokens={};FR.positions.forEach(p=>{if(!p.endedAt&&p.token){var id=CG_REV[p.token.toUpperCase()]||p.coingeckoId;if(id)tokens[p.token.toUpperCase()]=id}});LO.forEach(function(l){[l.collateraltoken,l.borrowtoken].forEach(function(sym){sym=(sym||'').toUpperCase();if(sym&&CG_REV[sym])tokens[sym]=CG_REV[sym]})});var modalColl=document.getElementById("f-lct")?.value?.trim()?.toUpperCase(),modalBorrow=document.getElementById("f-lbt")?.value?.trim()?.toUpperCase();if(modalColl&&CG_REV[modalColl])tokens[modalColl]=CG_REV[modalColl];if(modalBorrow&&CG_REV[modalBorrow])tokens[modalBorrow]=CG_REV[modalBorrow];
   var ids=Object.values(tokens);if(!ids.length)return;
   fetch("https://api.coingecko.com/api/v3/simple/price?ids="+ids.join(",")+"&vs_currencies=usd").then(r=>r.json()).then(d=>{
     for(var sym in tokens){var cgId=tokens[sym];if(d[cgId]&&d[cgId].usd)PRICES[sym]=d[cgId].usd}
-    R();
+    calcLoopData();R();
   }).catch(()=>{});
 }
 
@@ -369,37 +370,35 @@ function loopPayloadFromForm(){
   var cb=parseFloat(document.getElementById("f-lcb").value),cp=parseFloat(document.getElementById("f-lcp").value);
   var csm=parseFloat(document.getElementById("f-lcsm").value),sa=parseFloat(document.getElementById("f-lsa").value);
   var ba=parseFloat(document.getElementById("f-lba").value),ce=parseFloat(document.getElementById("f-lce").value),be=parseFloat(document.getElementById("f-lbe").value);
-  if(!ct||!bt||!cb||!cp||!csm||!sa||!ba)return null;
+  if(!ct||!bt||!cb||!csm||isNaN(sa)||isNaN(ba))return null;
   var startDate=d?new Date(d+"T"+t).toISOString():new Date().toISOString();
-  var endColl=isNaN(ce)?csm:ce,endBorrow=isNaN(be)?0:be;
-  var lev=cb>0?((endColl*cp)/cb):1;
-  return {name:ct+" / "+bt,startDate:startDate,collateralToken:ct,borrowToken:bt,startCollateral:cb,collateralPrice:cp,startCollateralAmount:csm,supplyApy:sa,borrowedAmount:endBorrow,borrowApy:ba,endCollateralAmount:endColl,endBorrowedAmount:endBorrow,leverage:lev||1};
+  var endColl=isNaN(ce)?csm:ce;
+  var endBorrow=isNaN(be)?0:be;
+  var totals=calculateLoopingTotals({collateralToken:ct,borrowToken:bt,startCollateral:cb,collateralPrice:cp,startCollateralAmount:csm,endCollateralAmount:endColl,supplyApy:sa,borrowApy:ba,endBorrowedAmount:endBorrow});
+  if(!totals.price||!totals.leverage)return null;
+  return {name:ct+" / "+bt,startDate:startDate,collateralToken:ct,borrowToken:bt,startCollateral:cb,collateralPrice:totals.price,startCollateralAmount:csm,supplyApy:sa,borrowedAmount:endBorrow,borrowApy:ba,endCollateralAmount:endColl,endBorrowedAmount:endBorrow,leverage:totals.leverage};
 }
-function loopSupplyValue(l){
-  var price=parseFloat(l.collateralprice||0),amt=parseFloat(l.endcollateralamount||l.startcollateralamount||0);
-  return amt>0&&price>0?amt*price:0;
+function loopTokenPrice(sym,fallback){var key=(sym||'').toUpperCase(),px=parseFloat(PRICES[key]||0),fb=parseFloat(fallback||0);if(px>0)return px;if(STABLE_PRICES[key])return STABLE_PRICES[key];return fb>0?fb:0}
+function calculateLoopingTotals(l){
+  var equity=parseFloat(l.startCollateral||l.startcollateral||0),collatAmt=parseFloat(l.endCollateralAmount||l.endcollateralamount||l.startCollateralAmount||l.startcollateralamount||0),borrowTokenAmt=parseFloat(l.endBorrowedAmount||l.endborrowedamount||l.borrowedAmount||l.borrowedamount||0)||0,collToken=l.collateralToken||l.collateraltoken||'',borrowToken=l.borrowToken||l.borrowtoken||'',collPrice=loopTokenPrice(collToken, l.collateralPrice||l.collateralprice),sup=parseFloat(l.supplyApy||l.supplyapy||0),bor=Math.abs(parseFloat(l.borrowApy||l.borrowapy||0)||0),supplyUsd=collatAmt>0&&collPrice>0?collatAmt*collPrice:0,lev=equity>0&&supplyUsd>0?supplyUsd/equity:(parseFloat(l.leverage||0)||1),borrowPrice=loopTokenPrice(borrowToken, borrowToken&&borrowToken.toUpperCase()===(collToken||'').toUpperCase()?collPrice:0),borrowUsd=borrowPrice>0?borrowTokenAmt*borrowPrice:0,netApr=equity>0?((sup*(supplyUsd/equity))-(bor*(borrowUsd/equity))):((lev*sup)-(Math.max(lev-1,0)*bor));
+  return {equity:equity,price:collPrice,borrowPrice:borrowPrice,collateralAmount:collatAmt,supplyUsd:supplyUsd,borrowUsd:borrowUsd,borrowTokenAmount:borrowTokenAmt,leverage:lev||1,netApr:netApr};
 }
-function loopBorrowValue(l){
-  return parseFloat(l.endborrowedamount||l.borrowedamount||0)||0;
-}
-function loopLeverage(l){
-  var equity=parseFloat(l.startcollateral||0),supplyValue=loopSupplyValue(l);
-  if(equity>0&&supplyValue>0)return supplyValue/equity;
-  return parseFloat(l.leverage||1)||1;
-}
-function loopNetApr(l){
-  var equity=parseFloat(l.startcollateral||0),sup=parseFloat(l.supplyapy||0),bor=parseFloat(l.borrowapy||0),supplyValue=loopSupplyValue(l),borrowValue=loopBorrowValue(l);
-  if(equity>0&&supplyValue>0)return (sup*(supplyValue/equity))+(bor*(borrowValue/equity));
-  var lev=loopLeverage(l);
-  return (sup*lev)+(bor*Math.max(lev-1,0));
+function loopSupplyValue(l){return calculateLoopingTotals(l).supplyUsd}
+function loopBorrowValue(l){return calculateLoopingTotals(l).borrowUsd}
+function loopBorrowTokenAmount(l){return calculateLoopingTotals(l).borrowTokenAmount}
+function loopLeverage(l){return calculateLoopingTotals(l).leverage}
+function loopNetApr(l){return calculateLoopingTotals(l).netApr}
+function calcLoopData(){
+  var cb=parseFloat(document.getElementById("f-lcb")?.value)||0,sa=parseFloat(document.getElementById("f-lsa")?.value)||0,ba=parseFloat(document.getElementById("f-lba")?.value)||0,csm=parseFloat(document.getElementById("f-lcsm")?.value)||0,ce=parseFloat(document.getElementById("f-lce")?.value),be=parseFloat(document.getElementById("f-lbe")?.value),ct=document.getElementById("f-lct")?.value?.trim()||"",bt=document.getElementById("f-lbt")?.value?.trim()||"",cpEl=document.getElementById("f-lcp");
+  if(cpEl&&!M.lpm){var autoPrice=loopTokenPrice(ct,(cb>0&&csm>0)?cb/csm:0);cpEl.value=autoPrice>0?autoPrice.toFixed(6):""}
+  calculateLoopingTotals({collateralToken:ct,borrowToken:bt,startCollateral:cb,collateralPrice:parseFloat(cpEl&&cpEl.value||0),startCollateralAmount:csm,endCollateralAmount:isNaN(ce)?csm:ce,endBorrowedAmount:isNaN(be)?0:be,supplyApy:sa,borrowApy:ba});
 }
 function hLoopCr(){var payload=loopPayloadFromForm();if(!payload)return alert("Bitte alle Pflichtfelder ausfüllen.");cm();api('/api/loops',{method:'POST',body:JSON.stringify(payload)}).then(function(r){if(r.status!==200){alert((r.data&&r.data.error)||"Loop konnte nicht erstellt werden.");return;}LO.unshift({id:r.data.id,name:payload.name,startdate:payload.startDate,collateraltoken:payload.collateralToken,borrowtoken:payload.borrowToken,startcollateral:payload.startCollateral,collateralprice:payload.collateralPrice,startcollateralamount:payload.startCollateralAmount,supplyapy:payload.supplyApy,borrowapy:payload.borrowApy,borrowedamount:payload.borrowedAmount,endcollateralamount:payload.endCollateralAmount,endborrowedamount:payload.endBorrowedAmount,leverage:payload.leverage,status:'active'});R();loadLoops();}).catch(()=>{});}
 function openLoopEdit(id){var l=LO.find(function(x){return x.id===id});if(!l)return;M.led=l;M.lpm=0;R();}
 function hLoopUpd(){if(!M.led||!M.led.id)return;var id=M.led.id;var payload=loopPayloadFromForm();if(!payload)return alert("Bitte alle Pflichtfelder ausfüllen.");cm();api('/api/loops/'+id,{method:'PUT',body:JSON.stringify(payload)}).then(function(r){if(r.status!==200){alert((r.data&&r.data.error)||"Loop konnte nicht gespeichert werden.");return;}loadLoops();}).catch(()=>{});}
 function closeLoop(id){if(!confirm("Loop wirklich schließen?"))return;api('/api/loops/'+id+'/close',{method:'POST',body:JSON.stringify({endDate:new Date().toISOString()})}).then(()=>{loadLoops();});}
 function updateLoopName(){var ct=document.getElementById("f-lct")?.value||"";var bt=document.getElementById("f-lbt")?.value||"";var nameEl=document.getElementById("f-ln-auto");if(ct&&bt){nameEl.textContent=ct+" / "+bt;nameEl.style.color="var(--g)";}else{nameEl.textContent="Collateral Token / Borrow Token";nameEl.style.color="var(--t4)";}}
-function toggleLoopPriceMode(){var cpEl=document.getElementById("f-lcp"),chk=document.getElementById("f-lpm");if(!cpEl||!chk)return;M.lpm=chk.checked?1:0;cpEl.readOnly=!chk.checked;cpEl.style.background=chk.checked?'var(--bg)':'var(--bg3)';cpEl.style.color=chk.checked?'var(--t)':'var(--t3)';if(!chk.checked)calcLoopData()}
-function calcLoopData(){if(M.lpm)return;var cb=parseFloat(document.getElementById("f-lcb")?.value)||0;var csm=parseFloat(document.getElementById("f-lcsm")?.value)||0;var cpEl=document.getElementById("f-lcp");if(cpEl){cpEl.value=(cb>0&&csm>0)?(cb/csm).toFixed(6):"";}}
+function toggleLoopPriceMode(){var cpEl=document.getElementById("f-lcp"),chk=document.getElementById("f-lpm");if(!cpEl||!chk)return;M.lpm=chk.checked?1:0;cpEl.readOnly=!chk.checked;cpEl.style.background=chk.checked?'var(--bg)':'var(--bg3)';cpEl.style.color=chk.checked?'var(--t)':'var(--t3)';calcLoopData()}
 function hFeature() {
   let t = document.getElementById('f-title').value, m = document.getElementById('f-desc').value;
   if(!t || !m) return alert("Bitte Titel und Beschreibung ausfüllen.");
@@ -871,35 +870,34 @@ function R() {
       h+='<div style="background:linear-gradient(90deg,var(--y),var(--o));color:#000;padding:12px 20px;border-radius:8px;margin-bottom:20px;font-weight:600;text-align:center;font-size:14px">🚧 Looping noch im Aufbau - BETA - Funktionen können sich ändern 🚧</div>';
       var activeL=LO.filter(l=>l.status==='active'||!l.status);
       var closedL=LO.filter(l=>l.status==='closed');
-      var totalCollat=activeL.reduce((s,l)=>s+parseFloat(l.startcollateral||0),0);
-      var avgLeverage=activeL.length>0?activeL.reduce((s,l)=>s+loopLeverage(l),0)/activeL.length:0;
-      var netApr=activeL.length>0?activeL.reduce((s,l)=>s+loopNetApr(l),0)/activeL.length:0;
+      var activeCalc=activeL.map(function(l){return{loop:l,totals:calculateLoopingTotals(l)}});
+      var totalCollat=activeCalc.reduce((s,x)=>s+(x.totals.supplyUsd||0),0);
+      var avgLeverage=activeCalc.length>0?activeCalc.reduce((s,x)=>s+x.totals.leverage,0)/activeCalc.length:0;
+      var netApr=activeCalc.length>0?activeCalc.reduce((s,x)=>s+x.totals.netApr,0)/activeCalc.length:0;
       h+='<div class="sm"><div class="sc"><span class="sl">Aktive Loops</span><span class="sv">'+activeL.length+'</span></div><div class="sc"><span class="sl">Gesamt Collateral</span><span class="sv">'+fn(totalCollat)+' <span class="u">USDC</span></span></div><div class="sc"><span class="sl">Ø Hebel</span><span class="sv">'+avgLeverage.toFixed(1)+'x</span></div><div class="sc"><span class="sl">Netto APR</span><span class="sv '+(netApr>0?'g':(netApr<0?'r':''))+'">'+((netApr>0)?'+':'')+netApr.toFixed(2)+'%</span></div></div>';
       h+='<div class="sh"><h2 class="st">Aktive Loops</h2><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="bt bp" onclick="M.lcr=1;R()"><span style="font-size:17px">+</span> Neuer Loop</button></div></div>';
       if(!activeL.length)h+='<div class="emp">Keine aktiven Loops.</div>';
       else{
-        activeL.forEach(function(l){
-          var lev=loopLeverage(l);
-          var supAPY=parseFloat(l.supplyapy||0);
-          var borAPY=parseFloat(l.borrowapy||0);
-          var netAPR=loopNetApr(l);
+        activeCalc.forEach(function(entry){
+          var l=entry.loop,tot=entry.totals,lev=tot.leverage,supAPY=parseFloat(l.supplyapy||0),borAPY=Math.abs(parseFloat(l.borrowapy||0)),netAPR=tot.netApr;
           var runtimeDays=db(l.startdate,nw);
           var sc=parseFloat(l.startcollateral||0);
           var startAmount=parseFloat(l.startcollateralamount||0);
-          var startPrice=parseFloat(l.collateralprice||0);
+          var startPrice=tot.price;
           var ce=parseFloat(l.endcollateralamount||l.startcollateralamount||0);
-          var be=parseFloat(l.endborrowedamount||l.borrowedamount||0);
+          var borrowUsd=tot.borrowUsd;
+          var borrowTokenAmt=tot.borrowTokenAmount;
           h+='<div class="cd" style="margin-bottom:16px">';
           h+='<div class="cdh" style="background:var(--bg3);border-bottom:1px solid var(--bd)"><div><div class="cdn" style="max-width:100%;white-space:normal;overflow:visible;text-overflow:clip">'+es(l.name)+'</div><div style="font-size:12px;color:var(--t3);margin-top:2px">'+fd(l.startdate)+'</div></div><div style="flex:1;text-align:center;font-size:12px;color:var(--t3);font-family:\'JetBrains Mono\',monospace">Laufzeit: '+runtimeDays.toFixed(1)+' T</div><span class="bdg ac" style="font-size:13px;padding:5px 10px">Hebel: '+lev.toFixed(1)+'x</span></div>';
           h+='<div class="cdb">';
           h+='<div style="background:var(--bg2);padding:10px;border-radius:6px;margin-bottom:12px"><div style="font-size:10px;color:var(--t4);text-transform:uppercase">Start Invest in USDC</div><div style="font-size:14px;font-weight:600;color:var(--t)">'+fn(sc)+' USDC</div><div style="font-size:11px;color:var(--t3);margin-top:4px">'+es(l.collateraltoken)+': '+fn(startAmount)+' @ $'+fn(startPrice)+'</div></div>';
           h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">';
-          h+='<div style="background:var(--g-bg);padding:10px;border-radius:6px;border:1px solid var(--g)"><div style="font-size:10px;color:var(--g);text-transform:uppercase">Collateral</div><div style="font-size:14px;font-weight:600;color:var(--t)">'+fn(ce)+' '+es(l.collateraltoken)+'</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Wert: '+fn(ce*startPrice)+' USDC</div></div>';
-          h+='<div style="background:var(--r-bg);padding:10px;border-radius:6px;border:1px solid var(--r)"><div style="font-size:10px;color:var(--r);text-transform:uppercase">Borrow</div><div style="font-size:14px;font-weight:600;color:var(--t)">'+fn(be)+' '+es(l.borrowtoken)+'</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Wert: '+fn(be)+' USDC</div></div>';
+          h+='<div style="background:var(--g-bg);padding:10px;border-radius:6px;border:1px solid var(--g)"><div style="font-size:10px;color:var(--g);text-transform:uppercase">Collateral</div><div style="font-size:14px;font-weight:600;color:var(--t)">'+fn(ce)+' '+es(l.collateraltoken)+'</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Wert: '+fn(tot.supplyUsd)+' USDC</div></div>';
+          h+='<div style="background:var(--r-bg);padding:10px;border-radius:6px;border:1px solid var(--r)"><div style="font-size:10px;color:var(--r);text-transform:uppercase">Borrow</div><div style="font-size:14px;font-weight:600;color:var(--t)">'+fn(borrowTokenAmt)+' '+es(l.borrowtoken||l.collateraltoken)+'</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Wert: '+fn(borrowUsd)+' USDC</div></div>';
           h+='</div>';
           h+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">';
           h+='<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:6px"><div style="font-size:10px;color:var(--t4)">Supply APY</div><div style="font-size:14px;font-weight:600;color:'+(supAPY>0?'var(--g)':(supAPY<0?'var(--r)':'var(--t2)'))+'">'+(supAPY>0?'+':'')+supAPY.toFixed(2)+'%</div></div>';
-          h+='<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:6px"><div style="font-size:10px;color:var(--t4)">Borrow APY</div><div style="font-size:14px;font-weight:600;color:'+(borAPY>0?'var(--g)':(borAPY<0?'var(--r)':'var(--t2)'))+'">'+(borAPY>0?'+':'')+borAPY.toFixed(2)+'%</div></div>';
+          h+='<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:6px"><div style="font-size:10px;color:var(--t4)">Borrow Kosten</div><div style="font-size:14px;font-weight:600;color:'+(borAPY>0?'var(--r)':'var(--t2)')+'">'+(borAPY>0?'-':'')+borAPY.toFixed(2)+'%</div></div>';
           h+='<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:6px"><div style="font-size:10px;color:var(--t4)">Gehebelte APR</div><div style="font-size:14px;font-weight:600;color:'+(netAPR>0?'var(--g)':(netAPR<0?'var(--r)':'var(--t2)'))+'">'+(netAPR>0?'+':'')+netAPR.toFixed(2)+'%</div></div>';
           h+='</div>';
           h+='<div class="cdf"><button class="bt bb" onclick="event.stopPropagation();openLoopEdit(\''+l.id+'\')">Bearbeiten</button><button class="bt be" onclick="event.stopPropagation();closeLoop(\''+l.id+'\')">Schließen</button></div>';
@@ -976,7 +974,7 @@ if(M.adet){var ad=M.adet.acc,isSelf=AUTH.account&&AUTH.account.email===ad.email,
   if(M.lcr||M.led){
     var le=M.led||{},isEdit=!!M.led,sd=isEdit?(le.startdate||""):"",manualP=!!M.lpm;
     var vCb=isEdit?(le.startcollateral||""):"",vCt=isEdit?(le.collateraltoken||""):"",vCsm=isEdit?(le.startcollateralamount||""):"",vCp=isEdit?(le.collateralprice||""):"",vSa=isEdit?(le.supplyapy||""):"",vBt=isEdit?(le.borrowtoken||""):"",vBa=isEdit?(le.borrowapy||le.borrowapr||""):"",vCe=isEdit?(le.endcollateralamount||""):"",vBe=isEdit?(le.endborrowedamount||le.borrowedamount||""):"";
-    h+='<div class="ov" onclick="cm();R()"><div class="mdl" style="max-width:520px" onclick="event.stopPropagation()"><div class="mdt">'+(isEdit?'Loop bearbeiten':'Neuen Loop erstellen')+'</div><div style="background:var(--bg3);padding:12px;border-radius:8px;margin-bottom:16px;border:1px solid var(--bd)"><div style="font-size:11px;color:var(--t4);margin-bottom:6px">LOOP NAME (automatisch)</div><div style="font-size:16px;font-weight:600;color:var(--g)" id="f-ln-auto">'+(vCt&&vBt?es(vCt)+' / '+es(vBt):'Supply Token / Borrow Token')+'</div></div><div class="fr"><div class="fg"><label>Start Datum (leer = jetzt)</label><input id="f-ld" type="date" value="'+(sd?fds(sd):"")+'"></div><div class="fg"><label>Start Uhrzeit</label><input id="f-lt" type="time" value="'+(sd?fts(sd):"")+'"></div></div><div class="fg"><label>Start Invest in USDC</label><input id="f-lcb" type="number" step="any" placeholder="1000" value="'+vCb+'" oninput="calcLoopData()"><div class="hnt">Hier gibst du das Kapital ein, mit dem du den Loop aufsetzt.</div></div><div style="background:var(--yb);border:1px solid var(--y);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--y);font-weight:600;margin-bottom:10px">📥 SUPPLY</div><div class="fr"><div class="fg"><label>Supply Token</label><input id="f-lct" placeholder="ETH" value="'+es(vCt)+'" oninput="updateLoopName()"></div><div class="fg"><label>Supply APY (%)</label><input id="f-lsa" type="number" step="0.01" placeholder="8.5" value="'+vSa+'"></div></div><div class="fr" style="margin-top:10px"><div class="fg"><label>Start Tokenmenge</label><input id="f-lcsm" type="number" step="any" placeholder="0.42" value="'+vCsm+'" oninput="calcLoopData()"></div><div class="fg"><label>Tokenpreis beim Kauf (auto)</label><input id="f-lcp" type="number" step="any" '+(manualP?'':'readonly')+' style="background:'+(manualP?'var(--bg)':'var(--bg3)')+';color:'+(manualP?'var(--t)':'var(--t3)')+'" value="'+vCp+'"></div></div><div class="fg" style="margin-top:8px"><label class="sw"><input id="f-lpm" type="checkbox" '+(manualP?'checked':'')+' onchange="M.lpm=this.checked?1:0;toggleLoopPriceMode()"><span class="sl2"></span></label> <span style="font-size:12px;margin-left:8px;vertical-align:super">Tokenpreis manuell setzen</span></div></div><div style="background:var(--rb);border:1px solid var(--r);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--r);font-weight:600;margin-bottom:10px">📤 BORROW</div><div class="fr"><div class="fg"><label>Borrow Token</label><input id="f-lbt" placeholder="USDC" value="'+es(vBt)+'" oninput="updateLoopName()"></div><div class="fg"><label>Borrow APY (%)</label><input id="f-lba" type="number" step="0.01" placeholder="3.2" value="'+vBa+'"></div></div></div><div style="background:rgba(77,163,255,0.08);border:1px solid var(--bl);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--bl);font-weight:600;margin-bottom:10px">📊 OFFENE POSITION</div><div class="fr"><div class="fg"><label>Collateral Tokenmenge aktuell</label><input id="f-lce" type="number" step="any" placeholder="1.12" value="'+vCe+'"></div><div class="fg"><label>Borrow Tokenmenge aktuell</label><input id="f-lbe" type="number" step="any" placeholder="500" value="'+vBe+'"></div></div></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="'+(isEdit?'hLoopUpd()':'hLoopCr()')+'">'+(isEdit?'Speichern':'Erstellen')+'</button></div></div></div>';
+    h+='<div class="ov" onclick="cm();R()"><div class="mdl" style="max-width:520px" onclick="event.stopPropagation()"><div class="mdt">'+(isEdit?'Loop bearbeiten':'Neuen Loop erstellen')+'</div><div style="background:var(--bg3);padding:12px;border-radius:8px;margin-bottom:16px;border:1px solid var(--bd)"><div style="font-size:11px;color:var(--t4);margin-bottom:6px">LOOP NAME (automatisch)</div><div style="font-size:16px;font-weight:600;color:var(--g)" id="f-ln-auto">'+(vCt&&vBt?es(vCt)+' / '+es(vBt):'Supply Token / Borrow Token')+'</div></div><div class="fr"><div class="fg"><label>Start Datum (leer = jetzt)</label><input id="f-ld" type="date" value="'+(sd?fds(sd):"")+'"></div><div class="fg"><label>Start Uhrzeit</label><input id="f-lt" type="time" value="'+(sd?fts(sd):"")+'"></div></div><div class="fg"><label>Start Invest in USDC</label><input id="f-lcb" type="number" step="any" placeholder="1000" value="'+vCb+'" oninput="calcLoopData()"><div class="hnt">Hier gibst du das Kapital ein, mit dem du den Loop aufsetzt.</div></div><div style="background:var(--yb);border:1px solid var(--y);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--y);font-weight:600;margin-bottom:10px">📥 SUPPLY</div><div class="fr"><div class="fg"><label>Supply Token</label><input id="f-lct" placeholder="ETH" value="'+es(vCt)+'" oninput="updateLoopName();calcLoopData();fetchPrices()"></div><div class="fg"><label>Supply APY (%)</label><input id="f-lsa" type="number" step="0.01" placeholder="8.5" value="'+vSa+'" oninput="calcLoopData()"></div></div><div class="fr" style="margin-top:10px"><div class="fg"><label>Start Tokenmenge</label><input id="f-lcsm" type="number" step="any" placeholder="0.42" value="'+vCsm+'" oninput="calcLoopData()"></div><div class="fg"><label>Tokenpreis beim Kauf (auto)</label><input id="f-lcp" type="number" step="any" '+(manualP?'':'readonly')+' style="background:'+(manualP?'var(--bg)':'var(--bg3)')+';color:'+(manualP?'var(--t)':'var(--t3)')+'" value="'+vCp+'" oninput="calcLoopData()"></div></div><div class="fg" style="margin-top:8px"><label class="sw"><input id="f-lpm" type="checkbox" '+(manualP?'checked':'')+' onchange="M.lpm=this.checked?1:0;toggleLoopPriceMode()"><span class="sl2"></span></label> <span style="font-size:12px;margin-left:8px;vertical-align:super">Tokenpreis manuell setzen</span></div></div><div style="background:var(--rb);border:1px solid var(--r);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--r);font-weight:600;margin-bottom:10px">📤 BORROW</div><div class="fr"><div class="fg"><label>Borrow Token</label><input id="f-lbt" placeholder="USDC" value="'+es(vBt)+'" oninput="updateLoopName();calcLoopData();fetchPrices()"></div><div class="fg"><label>Borrow APY (%)</label><input id="f-lba" type="number" step="0.01" placeholder="3.2" value="'+vBa+'" oninput="calcLoopData()"></div></div></div><div style="background:rgba(77,163,255,0.08);border:1px solid var(--bl);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--bl);font-weight:600;margin-bottom:10px">📊 OFFENE POSITION</div><div class="fr"><div class="fg"><label>Collateral Tokenmenge aktuell</label><input id="f-lce" type="number" step="any" placeholder="1.12" value="'+vCe+'" oninput="calcLoopData()"></div><div class="fg"><label>Borrow Tokenmenge aktuell</label><input id="f-lbe" type="number" step="any" placeholder="500" value="'+vBe+'" oninput="calcLoopData()"></div></div></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="'+(isEdit?'hLoopUpd()':'hLoopCr()')+'">'+(isEdit?'Speichern':'Erstellen')+'</button></div></div></div>';
     setTimeout(calcLoopData,0);
   }
   
