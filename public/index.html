@@ -64,7 +64,7 @@ var MC={id:null,targetType:'all',targetAccountId:'',targetEmail:'',conversationI
 var SHOW_HINTS=true;
 var LAST_WAKE_AT=Date.now();
 var VERIFY_EMAIL="", VERIFY_RETRY_AT=0;
-var FRF_TOKEN_REQ={new:0,edit:0}, FRF_LIVE_QUOTES={}, FRF_LIVE_LOADING={}, FRF_LIVE_NEXT_AT={};
+var FRF_TOKEN_REQ={new:0,edit:0}, FRF_LIVE_QUOTES={}, FRF_LIVE_LOADING={}, FRF_LIVE_NEXT_AT={}, FRF_LIVE_TIMER={};
 
 // Pagination & Search Flags
 var PG_ACT=1, PG_PAST=1, PG_FRFO=1, PG_FRFC=1, PG_LOOP=1;
@@ -551,21 +551,33 @@ function frfTokenSuggest(mode){
 function frfLiveQuote(id){return FRF_LIVE_QUOTES[id]||null}
 function frfLiveRemaining(id){return Math.max(0,(FRF_LIVE_NEXT_AT[id]||0)-Date.now())}
 function frfLiveButtonLabel(id){if(FRF_LIVE_LOADING[id])return'Laedt...';var sec=Math.ceil(frfLiveRemaining(id)/1000);return sec>0?('Live ('+sec+'s)'):'Live'}
+function frfScheduleLiveTick(id){
+  if(!id)return;
+  if(FRF_LIVE_TIMER[id]){clearTimeout(FRF_LIVE_TIMER[id]);delete FRF_LIVE_TIMER[id]}
+  if(frfLiveRemaining(id)<=0)return;
+  FRF_LIVE_TIMER[id]=setTimeout(function(){
+    delete FRF_LIVE_TIMER[id];
+    if(FPI===id)R();
+    if(frfLiveRemaining(id)>0)frfScheduleLiveTick(id)
+  },1000)
+}
 function frfEnsureLive(id){if(!id||FRF_LIVE_QUOTES[id]||FRF_LIVE_LOADING[id])return;setTimeout(function(){if(FPI===id)frfFetchLive(id,true)},0)}
 function frfFetchLive(id){
   var force=arguments.length>1?!!arguments[1]:false;
   if(!id||FRF_LIVE_LOADING[id])return;
-  if(!force&&frfLiveRemaining(id)>0){R();return}
+  if(!force&&frfLiveRemaining(id)>0){frfScheduleLiveTick(id);R();return}
   FRF_LIVE_LOADING[id]=1;R();
   api('/api/frf/positions/'+encodeURIComponent(id)+'/live').then(function(r){
     delete FRF_LIVE_LOADING[id];
     FRF_LIVE_NEXT_AT[id]=Date.now()+5000;
     FRF_LIVE_QUOTES[id]=r.status===200?(r.data||{}):{error:(r.data&&r.data.error)||'Livepreis konnte nicht geladen werden'};
+    frfScheduleLiveTick(id);
     R();
   }).catch(function(err){
     delete FRF_LIVE_LOADING[id];
     FRF_LIVE_NEXT_AT[id]=Date.now()+5000;
     FRF_LIVE_QUOTES[id]={error:err&&err.message?err.message:'Livepreis konnte nicht geladen werden'};
+    frfScheduleLiveTick(id);
     R();
   })
 }
@@ -920,11 +932,11 @@ function R() {
     else if(V === 'frf_pos' && FPI) {
         var fp=FR.positions.find(x => x.id===FPI);
         if(fp){
-          var pnl=posPnl(fp),d=db(fp.startDate,fp.endedAt||nw),cap=posCapital(fp),a=calcApr(pnl-fp.fees,cap,d),pr=PRICES[fp.token?fp.token.toUpperCase():""],liveSize=posLiveSize(fp),rpnl=runningFunding(fp);
-          frfEnsureLive(fp.id);
+          var pnl=posPnl(fp),d=db(fp.startDate,fp.endedAt||nw),cap=posCapital(fp),a=calcApr(pnl-fp.fees,cap,d),pr=PRICES[fp.token?fp.token.toUpperCase():""],liveSize=posLiveSize(fp),rpnl=runningFunding(fp),isClosed=!!fp.endedAt;
+          if(!isClosed)frfEnsureLive(fp.id);
           var linkedS=fp.linkedStrategyId?S.find(s => s.id===fp.linkedStrategyId):null;
           var linkedL=fp.linkedLoopId?LO.find(l => l.id===fp.linkedLoopId):null;
-          var live=frfLiveQuote(fp.id),liveErr=live&&live.error?live.error:'',liveTs=live&&live.fetchedAt?new Date(live.fetchedAt).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'',shortLive=live&&live.short?live.short:null,longLive=live&&live.long?live.long:null;
+          var live=isClosed?null:frfLiveQuote(fp.id),liveErr=live&&live.error?live.error:'',liveTs=live&&live.fetchedAt?new Date(live.fetchedAt).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'',shortLive=live&&live.short?live.short:null,longLive=live&&live.long?live.long:null;
           var liveBtn=frfLiveButtonLabel(fp.id);
           var shortLivePrice=shortLive&&Number.isFinite(parseFloat(shortLive.price))&&parseFloat(shortLive.price)>0?'$'+fpr(parseFloat(shortLive.price)):'—';
           var longLivePrice=longLive&&Number.isFinite(parseFloat(longLive.price))&&parseFloat(longLive.price)>0?'$'+fpr(parseFloat(longLive.price)):'—';
@@ -937,8 +949,8 @@ function R() {
           if(linkedS){h+='<span class="bdg ac" style="cursor:pointer;margin-left:4px" onclick="SI=\''+linkedS.id+'\';V=\'detail\';R()">↗ '+es(linkedS.name)+'</span>';if(fp.type==='hedge'){h+='<label class="sw" style="vertical-align:middle;margin-left:12px;margin-right:4px"><input type="checkbox" '+(fp.includeInStrategy?'checked':'')+' onchange="frfTogStrat(\''+fp.id+'\')"><span class="sl2"></span></label><span style="font-size:11px;color:var(--t4);font-weight:500">In Strat-APR einbeziehen</span>';}}
           if(linkedL){h+='<span class="bdg frf" style="cursor:pointer;margin-left:4px" onclick="V=\'looping\';R()">↗ Loop: '+es(linkedL.name)+'</span>';}
           h+='</div><div class="dha" style="color:'+(a>0?'var(--g)':(a<0?'var(--r)':'var(--t3'))+'">'+a.toFixed(2)+'% <span class="u">APR</span></div></div>';
-        h+='<div class="dsg"><div class="dsi"><span class="dsl">Token</span><span class="dsv">'+fn(fp.tokenAmount)+' '+es(fp.token)+(pr?' <span class="price-live">$'+fn(pr)+'</span>':'')+'</span></div><div class="dsi"><span class="dsl">Pos. Größe</span><span class="dsv">'+fn(liveSize)+' USDC</span></div><div class="dsi" style="cursor:pointer" onclick="M.fprc={id:\''+fp.id+'\',mp:'+(fp.manualPrice||0)+',ump:'+(fp.useManualPrice?1:0)+'};R()"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span class="dsl">Tokenpreis'+(fp.useManualPrice?' (Manuell)':' (Live)')+'</span><button type="button" class="bt bb bs" style="padding:5px 10px;font-size:11px" onclick="event.stopPropagation();frfFetchLive(\''+fp.id+'\')" '+(frfLiveRemaining(fp.id)>0&&!FRF_LIVE_LOADING[fp.id]?'disabled':'')+'>'+liveBtn+'</button></div><span class="dsv">$'+fpr(fp.useManualPrice?fp.manualPrice:(pr||0))+' <span style="font-size:10px;color:var(--t4)">✎</span></span>'+(liveTs?'<div style="font-size:10px;color:var(--t4);margin-top:6px">Live aktualisiert: '+es(liveTs)+'</div>':'')+(liveErr?'<div style="font-size:10px;color:var(--r);margin-top:6px">'+es(liveErr)+'</div>':'')+'</div><div class="dsi"><span class="dsl">Kapital (prop.)</span><span class="dsv">'+fn(cap)+'</span></div><div class="dsi"><span class="dsl">Lfd. PNL</span><span class="dsv '+(rpnl>=0?"g":"r")+'">'+(rpnl>=0?"+":"")+fn(rpnl)+'</span></div><div class="dsi"><span class="dsl">Ges. PNL</span><span class="dsv '+(pnl>=0?"g":"r")+'">'+(pnl>=0?"+":"")+fn(pnl)+'</span></div><div class="dsi"><span class="dsl">Fees</span><span class="dsv r">-'+fn(fp.fees)+'</span></div><div class="dsi"><span class="dsl">Start</span><span class="dsv">'+fd(fp.startDate)+'</span></div><div class="dsi"><span class="dsl">Laufzeit</span><span class="dsv">'+d.toFixed(1)+' T</span></div></div>';
-        h+='<div class="ibx" style="margin-top:20px"><div class="igr"><div class="iti"><span class="itl">Short</span><span class="itv">'+es(exName(fp.shortExchangeId))+' @ $'+fpr(fp.entryPriceShort)+'</span><span class="itv" style="font-size:12px;color:var(--t3)">Live: '+(shortLive&&shortLive.error?es(shortLive.error):shortLivePrice)+(shortLiveMeta?' <span style="font-size:10px;color:var(--t4)">('+shortLiveMeta+')</span>':'')+'</span><span class="itv" style="color:'+(shortLivePnl===null?'var(--t3)':(shortLivePnl>=0?'var(--g)':'var(--r)'))+'">PNL: '+(shortLivePnl===null?'—':((shortLivePnl>=0?'+':'')+fn(shortLivePnl)+' USDC'))+'</span></div><div class="iti"><span class="itl">Long</span><span class="itv">'+(fp.longIsSpot?'Spot':es(exName(fp.longExchangeId)))+' @ $'+fpr(fp.entryPriceLong)+'</span><span class="itv" style="font-size:12px;color:var(--t3)">Live: '+(longLive&&longLive.error?es(longLive.error):longLivePrice)+(longLiveMeta?' <span style="font-size:10px;color:var(--t4)">('+longLiveMeta+')</span>':'')+'</span><span class="itv" style="color:'+(longLivePnl===null?'var(--t3)':(longLivePnl>=0?'var(--g)':'var(--r)'))+'">PNL: '+(longLivePnl===null?'—':((longLivePnl>=0?'+':'')+fn(longLivePnl)+' USDC'))+'</span></div></div></div>';
+        h+='<div class="dsg"><div class="dsi"><span class="dsl">Token</span><span class="dsv">'+fn(fp.tokenAmount)+' '+es(fp.token)+(pr?' <span class="price-live">$'+fn(pr)+'</span>':'')+'</span></div><div class="dsi"><span class="dsl">Pos. Größe</span><span class="dsv">'+fn(liveSize)+' USDC</span></div><div class="dsi"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span class="dsl">Livepreis-Abruf</span>'+(!isClosed?'<button type="button" class="bt bb bs" style="padding:5px 10px;font-size:11px" onclick="event.stopPropagation();frfFetchLive(\''+fp.id+'\')" '+(frfLiveRemaining(fp.id)>0&&!FRF_LIVE_LOADING[fp.id]?'disabled':'')+'>'+liveBtn+'</button>':'')+'</div>'+(isClosed?'<div style="font-size:10px;color:var(--t4);margin-top:6px">Position ist geschlossen</div>':(liveTs?'<div style="font-size:10px;color:var(--t4);margin-top:6px">Live aktualisiert: '+es(liveTs)+'</div>':'<div style="font-size:10px;color:var(--t4);margin-top:6px">Live aktualisiert: —</div>'))+(liveErr&&!isClosed?'<div style="font-size:10px;color:var(--r);margin-top:6px">'+es(liveErr)+'</div>':'')+'</div><div class="dsi"><span class="dsl">Kapital (prop.)</span><span class="dsv">'+fn(cap)+'</span></div><div class="dsi"><span class="dsl">Lfd. PNL</span><span class="dsv '+(rpnl>=0?"g":"r")+'">'+(rpnl>=0?"+":"")+fn(rpnl)+'</span></div><div class="dsi"><span class="dsl">Ges. PNL</span><span class="dsv '+(pnl>=0?"g":"r")+'">'+(pnl>=0?"+":"")+fn(pnl)+'</span></div><div class="dsi"><span class="dsl">Fees</span><span class="dsv r">-'+fn(fp.fees)+'</span></div><div class="dsi"><span class="dsl">Start</span><span class="dsv">'+fd(fp.startDate)+'</span></div><div class="dsi"><span class="dsl">Laufzeit</span><span class="dsv">'+d.toFixed(1)+' T</span></div></div>';
+        h+='<div class="ibx" style="margin-top:20px"><div class="igr"><div class="iti"><span class="itl">Short</span><span class="itv">'+es(exName(fp.shortExchangeId))+' @ $'+fpr(fp.entryPriceShort)+'</span>'+(!isClosed?('<span class="itv" style="font-size:12px;color:var(--t3)">Live: '+(shortLive&&shortLive.error?es(shortLive.error):shortLivePrice)+(shortLiveMeta?' <span style="font-size:10px;color:var(--t4)">('+shortLiveMeta+')</span>':'')+'</span><span class="itv" style="color:'+(shortLivePnl===null?'var(--t3)':(shortLivePnl>=0?'var(--g)':'var(--r)'))+'">PNL: '+(shortLivePnl===null?'—':((shortLivePnl>=0?'+':'')+fn(shortLivePnl)+' USDC'))+'</span>'):'')+'</div><div class="iti"><span class="itl">Long</span><span class="itv">'+(fp.longIsSpot?'Spot':es(exName(fp.longExchangeId)))+' @ $'+fpr(fp.entryPriceLong)+'</span>'+(!isClosed?('<span class="itv" style="font-size:12px;color:var(--t3)">Live: '+(longLive&&longLive.error?es(longLive.error):longLivePrice)+(longLiveMeta?' <span style="font-size:10px;color:var(--t4)">('+longLiveMeta+')</span>':'')+'</span><span class="itv" style="color:'+(longLivePnl===null?'var(--t3)':(longLivePnl>=0?'var(--g)':'var(--r)'))+'">PNL: '+(longLivePnl===null?'—':((longLivePnl>=0?'+':'')+fn(longLivePnl)+' USDC'))+'</span>'):'')+'</div></div></div>';
         if(fp.endedAt){h+='<div class="ibx"><div class="igr"><div class="iti"><span class="itl">Close PNL Short</span><span class="itv" style="color:'+(fp.closePnlShort>=0?"var(--g)":"var(--r)")+'">'+(fp.closePnlShort>=0?"+":"")+fn(fp.closePnlShort||0)+'</span></div><div class="iti"><span class="itl">Close PNL Long</span><span class="itv" style="color:'+(fp.closePnlLong>=0?"var(--g)":"var(--r)")+'">'+(fp.closePnlLong>=0?"+":"")+fn(fp.closePnlLong||0)+'</span></div></div></div>';}
         var fsArr=fp.fundingShort||[],flArr=fp.fundingLong||[],ek4s="ffs_"+fp.id,isO4s=EXP[ek4s],ek4l="ffl_"+fp.id,isO4l=EXP[ek4l];
         h+='<div class="sh" style="margin-top:24px"><h3 class="st">Funding Short: '+(latestFunding(fsArr)>=0?"+":"")+fn(latestFunding(fsArr))+'</h3>'+(!fp.endedAt?'<button class="bt bpr bs" onclick="M.ffund={pid:\''+fp.id+'\',side:\'short\'};R()"><span style="font-size:16px">+</span> Funding</button>':'')+'</div>';
