@@ -156,7 +156,7 @@ function frfAprForSort(p){var end=p.endedAt||new Date().toISOString(),dur=db(p.s
 function frfTotalApr(arr){var totalCap=0,totalWeighted=0;(arr||[]).forEach(p=>{if(!posIncl(p))return;var cap=posCapital(p),apr=frfAprForSort(p);if(cap>0&&isFinite(apr)){totalCap+=cap;totalWeighted+=apr*cap}});return totalCap>0?totalWeighted/totalCap:0}
 function sortFrf(arr){var xs=arr.slice();xs.sort((a,b)=>{var av=0,bv=0,an=(a.token||"").toLowerCase(),bn=(b.token||"").toLowerCase();if(FRF_SORT==="az")return an.localeCompare(bn,"de");if(FRF_SORT==="za")return bn.localeCompare(an,"de");if(FRF_SORT==="apr"){av=frfAprForSort(a);bv=frfAprForSort(b);if(bv!==av)return bv-av;return an.localeCompare(bn,"de")}if(FRF_SORT==="runtime"){av=db(a.startDate,a.endedAt||new Date().toISOString());bv=db(b.startDate,b.endedAt||new Date().toISOString());if(bv!==av)return bv-av;return an.localeCompare(bn,"de")}av=posLiveSize(a);bv=posLiveSize(b);if(bv!==av)return bv-av;return an.localeCompare(bn,"de")});return xs}
 function exMargin(ex){return ex.marginHistory.reduce((a,m)=>a+m.amount,0)}
-function exName(id){var e=FR.exchanges.find(x=>x.id===id);return e?e.name:"Spot"}
+function exName(id){var e=FR.exchanges.find(x=>x.id===id);return e?normExchangeLabel(e.name):"Spot"}
 function latestFunding(arr){return arr&&arr.length?arr[arr.length-1].amount:0}
 function posIncl(p){return p.excluded!==true}
 function runningFunding(p){return latestFunding(p.fundingShort)+latestFunding(p.fundingLong)+posFloatingPnl(p)}
@@ -529,12 +529,14 @@ function frfReopenPos(id){F("/api/frf/positions/"+id+"/reopen",{method:"PUT"}).t
 function linkedTargetValue(p){return p&&p.linkedLoopId?('loop:'+p.linkedLoopId):(p&&p.linkedStrategyId?('strategy:'+p.linkedStrategyId):'')}
 function linkedTargetOptions(selectedValue){var opts=['<option value="">-- Keine --</option>'];S.filter(function(s){return!s.endedAt}).forEach(function(s){opts.push('<option value="strategy:'+s.id+'"'+(selectedValue==='strategy:'+s.id?' selected':'')+'>Strategie: '+es(s.name)+'</option>')});LO.filter(function(l){return l.status==='active'||!l.status}).forEach(function(l){opts.push('<option value="loop:'+l.id+'"'+(selectedValue==='loop:'+l.id?' selected':'')+'>Loop: '+es(l.name)+'</option>')});return opts.join('')}
 function linkedTargetPayload(selectId){var value=document.getElementById(selectId).value||'';return{linkedStrategyId:value.indexOf('strategy:')===0?value.slice(9):'',linkedLoopId:value.indexOf('loop:')===0?value.slice(5):''}}
+function normExchangeLabel(name){var v=String(name||'').trim();if(!v)return'';var low=v.toLowerCase();if(low==='extendet'||low==='extended')return'Extended';if(low==='bybit')return'Bybit';if(low==='phemex')return'Phemex';if(low==='variational')return'Variational';if(low==='hyperliquid')return'Hyperliquid';return v}
 function frfTokenFieldIds(mode){return mode==='edit'?{input:'f-eptk',short:'f-epsh',long:'f-eplg',box:'f-eptk-sug'}:{input:'f-ptk',short:'f-psh',long:'f-plg',box:'f-ptk-sug'}}
 function frfSelectedExchangeIds(mode){var ids=frfTokenFieldIds(mode),shortEl=document.getElementById(ids.short),longEl=document.getElementById(ids.long),list=[],shortId=shortEl&&shortEl.value?shortEl.value:'',longId=longEl&&longEl.value&&longEl.value!=='_spot'?longEl.value:'';if(shortId)list.push(shortId);if(longId&&list.indexOf(longId)===-1)list.push(longId);return list}
 function frfTokenSuggestBox(mode){var ids=frfTokenFieldIds(mode);return document.getElementById(ids.box)}
 function frfRenderTokenSuggestions(mode,html){var box=frfTokenSuggestBox(mode);if(box)box.innerHTML=html||''}
 function frfTokenSelect(mode,token){var ids=frfTokenFieldIds(mode),input=document.getElementById(ids.input);if(input)input.value=token||'';frfRenderTokenSuggestions(mode,'')}
-function frfTokenSuggestSection(mode,group){var items=Array.isArray(group&&group.items)?group.items:[];if(!items.length)return'';return'<div class="tok-suggest-section"><div class="tok-suggest-meta">'+es(group.exchangeName||'Börse')+(group.provider?' - '+es(group.provider):'')+'</div><div class="tok-suggest-list">'+items.map(function(item){var token=es(item.symbol||''),label=es(item.label||item.market||item.symbol||'');return'<button type="button" class="tok-suggest-item" onclick="frfTokenSelect(\''+mode+'\',\''+token+'\')"><span>'+token+'</span><small>'+label+'</small></button>'}).join('')+'</div></div>'}
+function frfCloseTokenSuggestions(){frfRenderTokenSuggestions('new','');frfRenderTokenSuggestions('edit','')}
+function frfTokenSuggestSection(mode,group){var items=Array.isArray(group&&group.items)?group.items:[];if(!items.length)return'';var ex=normExchangeLabel(group.exchangeName||'Börse'),provider=normExchangeLabel(group.provider||''),meta=provider&&provider.toLowerCase()!==ex.toLowerCase()?ex+' - '+provider:ex;return'<div class="tok-suggest-section"><div class="tok-suggest-meta">'+es(meta)+'</div><div class="tok-suggest-list">'+items.map(function(item){var token=es(item.symbol||''),label=es(item.label||item.market||item.symbol||'');return'<button type="button" class="tok-suggest-item" onclick="frfTokenSelect(\''+mode+'\',\''+token+'\')"><span>'+token+'</span><small>'+label+'</small></button>'}).join('')+'</div></div>'}
 function frfTokenSuggest(mode){
   var ids=frfTokenFieldIds(mode),input=document.getElementById(ids.input),query=input&&input.value?input.value.trim():'',exchangeIds=frfSelectedExchangeIds(mode),reqId=++FRF_TOKEN_REQ[mode];
   if(!input)return;
@@ -1104,7 +1106,11 @@ if(M.fnew){h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="even
   for(var k in foc)if(M[k]){setTimeout(function(id){return function(){var el=document.getElementById(id);if(el)el.focus()}}(foc[k]),50);break}
 }
 
-document.addEventListener("click", e => { if(M.usr) { M.usr=false; R(); } });
+document.addEventListener("click", e => {
+  var t=e&&e.target;
+  if(t&&!(t.closest&&t.closest('#f-ptk')||t.closest&&t.closest('#f-eptk')||t.closest&&t.closest('#f-ptk-sug')||t.closest&&t.closest('#f-eptk-sug'))) frfCloseTokenSuggestions();
+  if(M.usr) { M.usr=false; R(); }
+});
 
 setInterval(function(){if(!document.hidden&&!Object.keys(M).length&&AUTH.loggedIn)loadData()},30000);
 setInterval(function(){if(!document.hidden&&!Object.keys(M).length&&AUTH.loggedIn)fetchPrices()},120000);
