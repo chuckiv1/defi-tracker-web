@@ -1112,7 +1112,7 @@ if(M.fnew){h+='<div class="ov" onclick="cm();R()"><div class="mdl" onclick="even
 
 document.addEventListener("click", e => {
   var t=e&&e.target;
-  if(t&&!(t.closest&&t.closest('#f-pstk')||t.closest&&t.closest('#f-pltk')||t.closest&&t.closest('#f-estk')||t.closest&&t.closest('#f-eltk')||t.closest&&t.closest('#f-pstk-sug')||t.closest&&t.closest('#f-pltk-sug')||t.closest&&t.closest('#f-estk-sug')||t.closest&&t.closest('#f-eltk-sug'))) frfCloseTokenSuggestions();
+  if(t&&!((t.closest&&t.closest('#f-pstk'))||(t.closest&&t.closest('#f-pltk'))||(t.closest&&t.closest('#f-estk'))||(t.closest&&t.closest('#f-eltk'))||(t.closest&&t.closest('#f-pstk-sug'))||(t.closest&&t.closest('#f-pltk-sug'))||(t.closest&&t.closest('#f-estk-sug'))||(t.closest&&t.closest('#f-eltk-sug')))) frfCloseTokenSuggestions();
   if(M.usr) { M.usr=false; R(); }
 });
 
