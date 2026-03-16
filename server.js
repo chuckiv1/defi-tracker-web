@@ -2046,8 +2046,8 @@ router.get('/frf/positions/:id/live', async (req, res) => {
     try {
       if (!shortExchange) throw new Error('Short-Boerse nicht gefunden');
       const [quote, funding] = await Promise.all([
-        getExchangeQuote(shortExchange.name, position.token, 'perp'),
-        getExchangeFunding(shortExchange.name, position.token, 'perp')
+        getExchangeQuote(shortExchange.name, position.shortMarketSymbol || position.token, 'perp'),
+        getExchangeFunding(shortExchange.name, position.shortMarketSymbol || position.token, 'perp')
       ]);
       shortData = {
         ...quote,
@@ -2059,8 +2059,8 @@ router.get('/frf/positions/:id/live', async (req, res) => {
       shortData = { exchangeName: shortExchange ? shortExchange.name : 'Short', error: error.message || 'Short-Livepreis fehlgeschlagen', funding: null, entryPrice: shortEntry, pnl: 0 };
     }
     try {
-      const quote = position.longIsSpot ? await getFrfSpotFallback(position.token, shortExchange ? shortExchange.name : '', shortData && !shortData.error ? shortData : null) : await getExchangeQuote(longExchange ? longExchange.name : '', position.token, 'perp');
-      const funding = position.longIsSpot ? null : await getExchangeFunding(longExchange ? longExchange.name : '', position.token, 'perp');
+      const quote = position.longIsSpot ? await getFrfSpotFallback(position.longMarketSymbol || position.token, shortExchange ? shortExchange.name : '', shortData && !shortData.error ? shortData : null) : await getExchangeQuote(longExchange ? longExchange.name : '', position.longMarketSymbol || position.token, 'perp');
+      const funding = position.longIsSpot ? null : await getExchangeFunding(longExchange ? longExchange.name : '', position.longMarketSymbol || position.token, 'perp');
       longData = {
         ...quote,
         funding,
@@ -2133,7 +2133,7 @@ router.delete('/frf/exchanges/:id/margin/:mid', async (req, res) => {
 
 router.post('/frf/positions', async (req, res) => {
   svU(req, 'Pos+'); const f = req.profile.frf;
-  f.positions.push({id:gid(), type:req.body.type, token:req.body.token, coingeckoId:req.body.coingeckoId||'', tokenAmount:parseFloat(req.body.tokenAmount)||0, positionSizeUsd:parseFloat(req.body.positionSizeUsd)||0, entryPriceShort:parseFloat(req.body.entryPriceShort)||0, entryPriceLong:parseFloat(req.body.entryPriceLong)||0, shortExchangeId:req.body.shortExchangeId, longExchangeId:req.body.longExchangeId, longIsSpot:req.body.longIsSpot, fees:parseFloat(req.body.fees)||0, linkedStrategyId:req.body.linkedStrategyId||'', linkedLoopId:req.body.linkedLoopId||'', startDate:req.body.startDate||new Date().toISOString(), endedAt:null, closePnlShort:null, closePnlLong:null, closeNote:'', manualPrice:0, useManualPrice:false, includeInStrategy:false, excluded:false, fundingShort:[], fundingLong:[]});
+  f.positions.push({id:gid(), type:req.body.type, token:req.body.token, coingeckoId:req.body.coingeckoId||'', shortAssetSymbol:req.body.shortAssetSymbol||req.body.token||'', longAssetSymbol:req.body.longAssetSymbol||req.body.token||'', shortMarketSymbol:req.body.shortMarketSymbol||req.body.token||'', longMarketSymbol:req.body.longMarketSymbol||req.body.token||'', tokenAmount:parseFloat(req.body.tokenAmount)||0, positionSizeUsd:parseFloat(req.body.positionSizeUsd)||0, entryPriceShort:parseFloat(req.body.entryPriceShort)||0, entryPriceLong:parseFloat(req.body.entryPriceLong)||0, shortExchangeId:req.body.shortExchangeId, longExchangeId:req.body.longExchangeId, longIsSpot:req.body.longIsSpot, fees:parseFloat(req.body.fees)||0, linkedStrategyId:req.body.linkedStrategyId||'', linkedLoopId:req.body.linkedLoopId||'', startDate:req.body.startDate||new Date().toISOString(), endedAt:null, closePnlShort:null, closePnlLong:null, closeNote:'', manualPrice:0, useManualPrice:false, includeInStrategy:false, excluded:false, fundingShort:[], fundingLong:[]});
   await saveProfile(req); res.json(f);
 });
 router.delete('/frf/positions/:id', async (req, res) => { svU(req, 'Pos del'); const f = req.profile.frf; f.positions = f.positions.filter(x => x.id !== req.params.id); await saveProfile(req); res.json(f); });
@@ -2145,6 +2145,10 @@ router.put('/frf/positions/:id', async (req, res) => {
   p.type = req.body.type || p.type;
   p.token = req.body.token || p.token;
   p.coingeckoId = req.body.coingeckoId || p.coingeckoId || '';
+  if (typeof req.body.shortAssetSymbol === 'string') p.shortAssetSymbol = req.body.shortAssetSymbol;
+  if (typeof req.body.longAssetSymbol === 'string') p.longAssetSymbol = req.body.longAssetSymbol;
+  if (typeof req.body.shortMarketSymbol === 'string') p.shortMarketSymbol = req.body.shortMarketSymbol;
+  if (typeof req.body.longMarketSymbol === 'string') p.longMarketSymbol = req.body.longMarketSymbol;
   if (!Number.isNaN(parseFloat(req.body.tokenAmount))) p.tokenAmount = parseFloat(req.body.tokenAmount);
   if (!Number.isNaN(parseFloat(req.body.positionSizeUsd))) p.positionSizeUsd = parseFloat(req.body.positionSizeUsd);
   if (!Number.isNaN(parseFloat(req.body.entryPriceShort))) p.entryPriceShort = parseFloat(req.body.entryPriceShort);
