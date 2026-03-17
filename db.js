@@ -110,9 +110,15 @@ async function initDB() {
         leverage NUMERIC NOT NULL DEFAULT 1,
         status VARCHAR(20) DEFAULT 'active',
         notes TEXT,
+        pegReferenceToken VARCHAR(50),
+        pegEntryPrice NUMERIC,
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+
+      ALTER TABLE loops ADD COLUMN IF NOT EXISTS notes TEXT;
+      ALTER TABLE loops ADD COLUMN IF NOT EXISTS pegReferenceToken VARCHAR(50);
+      ALTER TABLE loops ADD COLUMN IF NOT EXISTS pegEntryPrice NUMERIC;
 
       CREATE TABLE IF NOT EXISTS loop_updates (
         id VARCHAR(50) PRIMARY KEY,
