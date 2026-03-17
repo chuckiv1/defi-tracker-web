@@ -1,9 +1,40 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  throw new Error('DATABASE_URL ist erforderlich. Bitte in der Umgebung setzen.');
+}
+
+function parseBootstrapEmails(name) {
+  return String(process.env[name] || '')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/defitracker',
+  connectionString: DATABASE_URL,
 });
+
+async function applyBootstrapRoles() {
+  const ownerEmails = parseBootstrapEmails('OWNER_EMAILS');
+  const adminEmails = parseBootstrapEmails('ADMIN_EMAILS');
+
+  if (ownerEmails.length) {
+    await pool.query(
+      'UPDATE accounts SET role = $1 WHERE LOWER(email) = ANY($2::text[])',
+      ['owner', ownerEmails],
+    );
+  }
+
+  if (adminEmails.length) {
+    await pool.query(
+      "UPDATE accounts SET role = $1 WHERE LOWER(email) = ANY($2::text[]) AND role <> 'owner'",
+      ['admin', adminEmails],
+    );
+  }
+}
 
 async function initDB() {
   try {
@@ -133,18 +164,11 @@ async function initDB() {
       CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversationId, createdAt ASC);
       CREATE INDEX IF NOT EXISTS idx_message_recipients_account ON message_recipients(accountId, readAt);
     `);
-    await pool.query(`
-      UPDATE accounts
-      SET role = CASE
-        WHEN LOWER(email) = LOWER('tom.schreiber.ts@gmail.com') THEN 'owner'
-        WHEN LOWER(email) = LOWER('tomschreiber.ts@gmail.com') AND role = 'owner' THEN 'admin'
-        ELSE role
-      END
-      WHERE LOWER(email) IN (LOWER('tom.schreiber.ts@gmail.com'), LOWER('tomschreiber.ts@gmail.com'))
-    `);
-    console.log("✅ Database initialized successfully.");
+    await applyBootstrapRoles();
+    console.log('Database initialized successfully.');
   } catch (err) {
-    console.error("❌ Error initializing database:", err);
+    console.error('Error initializing database:', err);
+    throw err;
   }
 }
 

@@ -16,10 +16,10 @@ const oracle = require('./services/oracle/aggregator');
 const app = express();
 const PORT = process.env.PORT || 3002;
 const APP_URL = process.env.APP_URL || 'https://defivault.cloud';
-if (!process.env.JWT_SECRET) {
-  console.warn('⚠️  WARNUNG: JWT_SECRET ist nicht gesetzt! Verwende unsicheren Fallback. In Produktion UNBEDINGT setzen!');
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET ist erforderlich. Bitte in der Umgebung setzen.');
 }
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_do_not_use_in_prod';
 const APP_IS_HTTPS = (() => {
   try {
     return new URL(APP_URL).protocol === 'https:';
@@ -50,6 +50,74 @@ const variationalFundingSnapshotFile = path.join(variationalFundingSnapshotDir, 
 const MESSAGE_SEGMENTS = new Set(['all_users', 'active_7d', 'active_30d', 'new_14d', 'verified_users', 'admins']);
 const ROLE_ORDER = ['user', 'support', 'admin', 'owner'];
 
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isValidEntryArray(list, requiredFields) {
+  if (!Array.isArray(list)) return false;
+  return list.every((entry) => isPlainObject(entry) && requiredFields.every((field) => Object.prototype.hasOwnProperty.call(entry, field)));
+}
+
+function isValidStrategy(strategy) {
+  return isPlainObject(strategy)
+    && typeof strategy.id === 'string'
+    && typeof strategy.name === 'string'
+    && typeof strategy.startDate === 'string'
+    && isPlainObject(strategy.token)
+    && typeof strategy.token.name === 'string'
+    && Number.isFinite(parseFloat(strategy.token.amount))
+    && Number.isFinite(parseFloat(strategy.token.entryPrice))
+    && isValidEntryArray(strategy.investmentHistory || [], ['id', 'amount', 'date'])
+    && isValidEntryArray(strategy.rewards || [], ['id', 'amount', 'date'])
+    && isValidEntryArray(strategy.pnl || [], ['id', 'amount', 'date']);
+}
+
+function isValidFrfPayload(frf) {
+  if (!isPlainObject(frf) || !Array.isArray(frf.exchanges) || !Array.isArray(frf.positions)) return false;
+
+  const exchangesValid = frf.exchanges.every((exchange) => isPlainObject(exchange)
+    && typeof exchange.id === 'string'
+    && typeof exchange.name === 'string'
+    && isValidEntryArray(exchange.marginHistory || [], ['id', 'amount', 'date']));
+
+  const positionsValid = frf.positions.every((position) => isPlainObject(position)
+    && typeof position.id === 'string'
+    && typeof position.type === 'string'
+    && typeof position.token === 'string'
+    && Number.isFinite(parseFloat(position.tokenAmount))
+    && isValidEntryArray(position.fundingShort || [], ['id', 'amount', 'date'])
+    && isValidEntryArray(position.fundingLong || [], ['id', 'amount', 'date']));
+
+  return exchangesValid && positionsValid;
+}
+
+function sanitizeMessageLinkUrl(rawValue) {
+  const value = String(rawValue || '').trim();
+  if (!value) return { value: null, invalid: false };
+  if (value.startsWith('/') && !value.startsWith('//')) return { value, invalid: false };
+
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return { value: parsed.toString(), invalid: false };
+    }
+  } catch (error) {
+    return { value: null, invalid: true };
+  }
+
+  return { value: null, invalid: true };
+}
+
+async function isPrivilegedRecipient(targetAccountId) {
+  if (!targetAccountId) return false;
+  const { rows } = await db.query(
+    "SELECT id FROM accounts WHERE id = $1 AND role IN ('support','admin','owner') AND isVerified = true AND isBlocked = false",
+    [targetAccountId],
+  );
+  return rows.length > 0;
+}
+
 const SMTP_CONFIG = {
   host: process.env.SMTP_HOST || "",
   port: parseInt(process.env.SMTP_PORT) || 465,
@@ -69,7 +137,20 @@ app.use('/api/auth/resend-verification', authLimiter);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-db.initDB().catch(err => console.error('❌ DB-Init fehlgeschlagen:', err));
+async function initDbWithRetry(maxAttempts = 10, delayMs = 3000) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await db.initDB();
+      return;
+    } catch (err) {
+      if (attempt === maxAttempts) throw err;
+      console.error(`DB-Init Versuch ${attempt} fehlgeschlagen: ${err.message}`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
+initDbWithRetry().catch((err) => console.error('DB-Init fehlgeschlagen:', err));
 
 // Cleanup Maps alle 10 Minuten um Memory Leaks zu verhindern
 setInterval(() => {
@@ -828,7 +909,7 @@ function normalizeMessagePayload(body) {
   const status = ['draft', 'scheduled', 'sent'].includes(body.status) ? body.status : 'draft';
   const title = String(body.title || '').trim();
   const text = String(body.body || '').trim();
-  const linkUrl = String(body.linkUrl || '').trim();
+  const linkData = sanitizeMessageLinkUrl(body.linkUrl);
   const targetAccountId = body.targetAccountId ? String(body.targetAccountId) : null;
   const conversationId = body.conversationId ? String(body.conversationId) : null;
   const parentMessageId = body.parentMessageId ? String(body.parentMessageId) : null;
@@ -842,7 +923,8 @@ function normalizeMessagePayload(body) {
     body: text,
     priority,
     category,
-    linkUrl: linkUrl || null,
+    linkUrl: linkData.value,
+    invalidLinkUrl: linkData.invalid,
     isPinned: !!body.isPinned,
     expiresAt: expiresAt && !Number.isNaN(expiresAt.getTime()) ? expiresAt.toISOString() : null,
     status,
@@ -1091,14 +1173,11 @@ app.post('/api/auth/register', async (req, res) => {
   const { rows: existing } = await db.query('SELECT id FROM accounts WHERE LOWER(email) = LOWER($1)', [email]);
   if (existing.length > 0) return res.status(400).json({ error: 'E-Mail existiert bereits' });
   
-  const { rows: allAccs } = await db.query('SELECT count(id) as count FROM accounts');
-  const isFirstUser = parseInt(allAccs[0].count) === 0;
-  
   const salt = crypto.randomBytes(16).toString('hex');
   const verifyToken = gid();
   const accId = gid();
   const passHash = await hashPassAsync(password, salt);
-  const role = isFirstUser ? 'admin' : 'user';
+  const role = 'user';
   
   await db.query(
     'INSERT INTO accounts (id, email, salt, passHash, role, isVerified, verifyToken, isBlocked) VALUES ($1, $2, $3, $4, $5, false, $6, false)',
@@ -1318,11 +1397,19 @@ app.delete('/api/loops/:id', requireAuth, attachProfile, async (req, res) => {
 app.post('/api/loops/:id/close', requireAuth, attachProfile, async (req, res) => {
   try {
     const { endDate, endCollateralAmount, endBorrowedAmount } = req.body;
+    const nextEndCollateralAmount = Number.isFinite(parseFloat(endCollateralAmount)) ? parseFloat(endCollateralAmount) : null;
+    const nextEndBorrowedAmount = Number.isFinite(parseFloat(endBorrowedAmount)) ? parseFloat(endBorrowedAmount) : null;
     await db.query(`
       UPDATE loops 
-      SET status = 'closed', endDate = $1, supplyAmount = $2, borrowAmount = $3, endCollateralAmount = $2, endBorrowedAmount = $3, updatedAt = CURRENT_TIMESTAMP
+      SET status = 'closed',
+          endDate = $1,
+          supplyAmount = COALESCE($2, supplyAmount, endCollateralAmount),
+          borrowAmount = COALESCE($3, borrowAmount, endBorrowedAmount),
+          endCollateralAmount = COALESCE($2, endCollateralAmount, supplyAmount),
+          endBorrowedAmount = COALESCE($3, endBorrowedAmount, borrowAmount),
+          updatedAt = CURRENT_TIMESTAMP
       WHERE id = $4 AND profileId = $5
-    `, [endDate, endCollateralAmount, endBorrowedAmount, req.params.id, req.profile.id]);
+    `, [endDate, nextEndCollateralAmount, nextEndBorrowedAmount, req.params.id, req.profile.id]);
     res.json({ ok: 1 });
   } catch(e) { console.error(e); res.status(500).json({error: 'Fehler beim Schließen'}); }
 });
@@ -1506,6 +1593,7 @@ app.post('/api/messages', requireAuth, async (req, res) => {
   try {
     const payload = normalizeMessagePayload(req.body || {});
     if (!payload.title || !payload.body) return res.status(400).json({ error: 'Betreff und Nachricht sind erforderlich' });
+    if (payload.invalidLinkUrl) return res.status(400).json({ error: 'Ungültiger Link' });
 
       if (!hasRole(req.account, 'support')) {
         payload.targetType = 'direct';
@@ -1513,8 +1601,7 @@ app.post('/api/messages', requireAuth, async (req, res) => {
         payload.category = 'support';
         payload.isPinned = false;
         payload.emailMirror = false;
-      const { rows: admins } = await db.query("SELECT id FROM accounts WHERE id = $1 AND role IN ('support','admin','owner') AND isVerified = true AND isBlocked = false", [payload.targetAccountId]);
-      if (!admins.length) return res.status(403).json({ error: 'Antworten sind nur an Support/Admin erlaubt' });
+      if (!(await isPrivilegedRecipient(payload.targetAccountId))) return res.status(403).json({ error: 'Antworten sind nur an Support/Admin erlaubt' });
     }
 
     if (hasRole(req.account, 'support')) {
@@ -1570,6 +1657,7 @@ app.put('/api/messages/:id', requireAuth, async (req, res) => {
 
     const payload = normalizeMessagePayload(req.body || {});
     if (!payload.title || !payload.body) return res.status(400).json({ error: 'Betreff und Nachricht sind erforderlich' });
+    if (payload.invalidLinkUrl) return res.status(400).json({ error: 'Ungültiger Link' });
 
     // Privilege Escalation Fix: Normale User dürfen nur direkte Nachrichten senden
     if (!hasRole(req.account, 'support')) {
@@ -1578,6 +1666,7 @@ app.put('/api/messages/:id', requireAuth, async (req, res) => {
       payload.category = 'support';
       payload.isPinned = false;
       payload.emailMirror = false;
+      if (!(await isPrivilegedRecipient(payload.targetAccountId))) return res.status(403).json({ error: 'Antworten sind nur an Support/Admin erlaubt' });
     }
 
     if (payload.targetType === 'direct' && !payload.targetAccountId) return res.status(400).json({ error: 'Empfänger fehlt' });
@@ -1740,6 +1829,7 @@ app.get('/api/oracle/lookup', requireAuth, async (req, res) => {
     const protocol = String(req.query.protocol || '').trim().slice(0, 40);
     const type = String(req.query.type || '').trim().toUpperCase();
     if (!asset) return res.status(400).json({ error: 'Asset fehlt' });
+    if (protocol && !/^[a-zA-Z0-9._-]{1,40}$/.test(protocol)) return res.status(400).json({ error: 'Ungueltiges Protokoll' });
     if (type && !['SUPPLY', 'BORROW', 'PRICE'].includes(type)) return res.status(400).json({ error: 'Ungueltiger Typ' });
     const rows = await oracle.queryOracleData({ asset, protocol: protocol || undefined, type: type || undefined });
     res.json(rows);
@@ -1780,7 +1870,9 @@ app.get('/api/demo-data', (req, res) => {
 
 app.post('/api/backup/restore', requireAuth, attachProfile, async (req, res) => {
   const { data, frf } = req.body;
-  if (!data || !frf) return res.status(400).json({ error: "Ungültige Backup-Datei" });
+  if (!Array.isArray(data) || !data.every(isValidStrategy) || !isValidFrfPayload(frf)) {
+    return res.status(400).json({ error: "Ungültige Backup-Datei" });
+  }
   req.profile.data = data; req.profile.frf = frf;
   await saveProfile(req);
   res.json({ ok: 1 });
@@ -1828,6 +1920,7 @@ app.get('/api/export/excel', requireAuth, attachProfile, async (req, res) => {
     req.profile.data.forEach((strategy) => {
       const investiert = strategy.investmentHistory.reduce((sum, current) => sum + current.amount, 0);
       const rewards = strategy.rewards.reduce((sum, current) => sum + current.amount, 0);
+      const pnl = (strategy.pnl || []).reduce((sum, current) => sum + current.amount, 0) + rewards;
       const basisToken = strategy.token ? `${strategy.token.amount} ${strategy.token.name} (@ ${strategy.token.entryPrice})` : '-';
       
       const mainRow = ws.addRow({
@@ -1836,7 +1929,7 @@ app.get('/api/export/excel', requireAuth, attachProfile, async (req, res) => {
         token: basisToken,
         invested: investiert,
         rewards: rewards,
-        pnl: (rewards - investiert) + investiert,
+        pnl,
         notes: strategy.notes
       });
 
