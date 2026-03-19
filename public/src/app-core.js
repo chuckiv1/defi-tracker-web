@@ -1834,6 +1834,11 @@ function openLoopDetail(id) {
     return x.id === id;
   });
   if (!l) return;
+  if (LOOPV === 'open') {
+    LPI = LPI === id ? null : id;
+    R();
+    return;
+  }
   LPI = id;
   R();
 }
@@ -1857,7 +1862,9 @@ function renderLoopDetailPanel(selLoop, nw, inline) {
     (inline ? 'ibx' : 'loop-detail') +
     '" style="' +
     (inline ? 'margin-top:12px;padding:16px;border:1px solid var(--bd);border-radius:12px;background:var(--bg2)' : 'margin-top:18px') +
-    '"><div class="dhd" style="' +
+    '"' +
+    (inline ? ' onclick="openLoopDetail(\'' + selLoop.id + '\')"' : '') +
+    '><div class="dhd" style="' +
     (inline ? 'margin-top:0' : 'margin-top:18px') +
     '"><div><div class="dhn">' +
     es(selLoop.name || 'Loop') +
@@ -5723,7 +5730,9 @@ function R(options) {
               var l = entry.loop,
                 tot = entry.totals;
               h +=
-                '<div class="lt-row" style="grid-template-columns:2fr 1fr 1fr 1fr 1fr 110px" onclick="openLoopDetail(\'' +
+                '<div class="lt-row loop-row' +
+                (LPI === l.id ? ' open' : '') +
+                '" style="grid-template-columns:2fr 1fr 1fr 1fr 1fr 110px" onclick="openLoopDetail(\'' +
                 l.id +
                 '\')"><span class="lt-name">' +
                 es(l.name || 'Loop') +
