@@ -1837,6 +1837,95 @@ function openLoopDetail(id) {
   LPI = id;
   R();
 }
+function renderLoopDetailPanel(selLoop, nw, inline) {
+  var selTot = calculateLoopingTotals(selLoop),
+    selPeg = loopPegInfo(
+      selLoop.collateraltoken || selLoop.collateralToken,
+      selLoop.pegreferencetoken ||
+        selLoop.pegReferenceToken ||
+        selLoop.borrowtoken ||
+        selLoop.borrowToken,
+      selLoop.pegentryprice || selLoop.pegEntryPrice,
+    ),
+    selRuntime = db(selLoop.startdate, selLoop.enddate || selLoop.endDate || nw),
+    selStatus = selLoop.status || 'active',
+    h = '';
+  if (!inline)
+    h += '<button class="bt bk" onclick="LPI=null;V=\'looping\';R()">← Zurück</button>';
+  h +=
+    '<div class="' +
+    (inline ? 'ibx' : 'loop-detail') +
+    '" style="' +
+    (inline ? 'margin-top:12px;padding:16px;border:1px solid var(--bd);border-radius:12px;background:var(--bg2)' : 'margin-top:18px') +
+    '"><div class="dhd" style="' +
+    (inline ? 'margin-top:0' : 'margin-top:18px') +
+    '"><div><div class="dhn">' +
+    es(selLoop.name || 'Loop') +
+    '</div><span class="bdg ' +
+    (selStatus === 'closed' ? 'en' : 'ac') +
+    '">' +
+    es(selStatus) +
+    '</span></div><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end"><span class="bdg ac" style="font-size:13px;padding:5px 10px">Hebel: ' +
+    selTot.leverage.toFixed(2) +
+    'x</span><div class="dha" style="font-size:20px">' +
+    (selTot.netApr > 0 ? '+' : '') +
+    selTot.netApr.toFixed(2) +
+    '% <span class="u">Gehebelte APR</span></div></div></div>';
+  h +=
+    '<div class="dsg"><div class="dsi"><span class="dsl">Start</span><span class="dsv">' +
+    fd(selLoop.startdate) +
+    '</span></div><div class="dsi"><span class="dsl">Ende</span><span class="dsv">' +
+    (selLoop.enddate || selLoop.endDate ? fd(selLoop.enddate || selLoop.endDate) : 'Offen') +
+    '</span></div><div class="dsi"><span class="dsl">Laufzeit</span><span class="dsv">' +
+    selRuntime.toFixed(1) +
+    ' T</span></div><div class="dsi"><span class="dsl">Collateral</span><span class="dsv">' +
+    fn(selTot.collateralAmount) +
+    ' ' +
+    es(selLoop.collateraltoken || '') +
+    '</span></div><div class="dsi"><span class="dsl">Borrow</span><span class="dsv">' +
+    fn(selTot.borrowTokenAmount) +
+    ' ' +
+    es(selLoop.borrowtoken || '') +
+    '</span></div><div class="dsi"><span class="dsl">Collateral Wert</span><span class="dsv">' +
+    fn(selTot.supplyUsd) +
+    ' USDC</span></div><div class="dsi"><span class="dsl">Borrow Wert</span><span class="dsv">' +
+    fn(selTot.borrowUsd) +
+    ' USDC</span></div></div>';
+  h +=
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px"><div style="background:var(--g-bg);padding:12px;border-radius:8px;border:1px solid var(--g);text-align:center"><div style="font-size:10px;color:var(--g);text-transform:uppercase">Supply</div><div style="font-size:15px;font-weight:600;color:var(--t);margin-top:4px">' +
+    fn(selTot.collateralAmount) +
+    ' ' +
+    es(selLoop.collateraltoken || '') +
+    '</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Wert: ' +
+    fn(selTot.supplyUsd) +
+    ' USDC</div><div style="font-size:12px;font-weight:600;color:' +
+    (selTot.supplyRateApr > 0 ? 'var(--g)' : selTot.supplyRateApr < 0 ? 'var(--r)' : 'var(--t2)') +
+    ';margin-top:8px;text-align:center">' +
+    (selTot.supplyRateApr > 0 ? '+' : '') +
+    selTot.supplyRateApr.toFixed(2) +
+    '% APR</div></div><div style="background:var(--r-bg);padding:12px;border-radius:8px;border:1px solid var(--r);text-align:center"><div style="font-size:10px;color:var(--r);text-transform:uppercase">Borrow</div><div style="font-size:15px;font-weight:600;color:var(--t);margin-top:4px">' +
+    fn(selTot.borrowTokenAmount) +
+    ' ' +
+    es(selLoop.borrowtoken || '') +
+    '</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Wert: ' +
+    fn(selTot.borrowUsd) +
+    ' USDC</div><div style="font-size:12px;font-weight:600;color:' +
+    (selTot.borrowRateApr > 0 ? 'var(--r)' : 'var(--t2)') +
+    ';margin-top:8px;text-align:center">' +
+    (selTot.borrowRateApr > 0 ? '-' : '') +
+    selTot.borrowRateApr.toFixed(2) +
+    '% APR</div></div></div>';
+  if (selPeg) h += '<div style="margin-top:18px">' + renderPegSummary(selPeg) + '</div>';
+  if (selLoop.notes)
+    h += '<div class="ibx" style="margin-top:18px"><div class="sh" style="margin:0 0 10px"><h3 class="st">Notiz</h3></div><div class="loop-note">' + es(selLoop.notes) + '</div></div>';
+  h +=
+    '<div style="display:flex;gap:10px;margin-top:24px;flex-wrap:wrap">' +
+    (selStatus === 'closed'
+      ? '<button class="bt bb" onclick="event.stopPropagation();openLoopEdit(\'' + selLoop.id + '\')">Bearbeiten</button>'
+      : '<button class="bt bb" onclick="event.stopPropagation();openLoopEdit(\'' + selLoop.id + '\')">Bearbeiten</button><button class="bt be" onclick="event.stopPropagation();closeLoop(\'' + selLoop.id + '\')">Schließen</button>') +
+    '</div></div>';
+  return h;
+}
 function openLoopEdit(id) {
   var l = LO.find(function (x) {
     return x.id === id;
@@ -2560,10 +2649,10 @@ function frfFundingSection(title, key, funding) {
 }
 function frfLiveUnavailable(data) {
   return !!(
-    data &&
-    (data.error ||
-      !Number.isFinite(parseFloat(data.price)) ||
-      !(parseFloat(data.price) > 0))
+    !data ||
+    data.error ||
+    !Number.isFinite(parseFloat(data.price)) ||
+    !(parseFloat(data.price) > 0)
   );
 }
 function frfFundingUnavailable(funding) {
@@ -5575,104 +5664,8 @@ function R(options) {
             return l.id === LPI;
           })
         : null;
-      if (selLoop) {
-        var selTot = calculateLoopingTotals(selLoop),
-          selPeg = loopPegInfo(
-            selLoop.collateraltoken || selLoop.collateralToken,
-            selLoop.pegreferencetoken ||
-              selLoop.pegReferenceToken ||
-              selLoop.borrowtoken ||
-              selLoop.borrowToken,
-            selLoop.pegentryprice || selLoop.pegEntryPrice,
-          ),
-          selRuntime = db(
-            selLoop.startdate,
-            selLoop.enddate || selLoop.endDate || nw,
-          ),
-          selStatus = selLoop.status || "active";
-        h +=
-          '<button class="bt bk" onclick="LPI=null;V=\'looping\';R()">← Zurück</button>';
-        h +=
-          '<div class="dhd" style="margin-top:18px"><div><div class="dhn">' +
-          es(selLoop.name || "Loop") +
-          '</div><span class="bdg ' +
-          (selStatus === "closed" ? "en" : "ac") +
-          '">' +
-          es(selStatus) +
-          '</span></div><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end"><span class="bdg ac" style="font-size:13px;padding:5px 10px">Hebel: ' +
-          selTot.leverage.toFixed(2) +
-          'x</span><div class="dha" style="font-size:20px">' +
-          (selTot.netApr > 0 ? "+" : "") +
-          selTot.netApr.toFixed(2) +
-          '% <span class="u">Gehebelte APR</span></div></div></div>';
-        h +=
-          '<div class="dsg"><div class="dsi"><span class="dsl">Start</span><span class="dsv">' +
-          fd(selLoop.startdate) +
-          '</span></div><div class="dsi"><span class="dsl">Ende</span><span class="dsv">' +
-          (selLoop.enddate || selLoop.endDate
-            ? fd(selLoop.enddate || selLoop.endDate)
-            : "Offen") +
-          '</span></div><div class="dsi"><span class="dsl">Laufzeit</span><span class="dsv">' +
-          selRuntime.toFixed(1) +
-          ' T</span></div><div class="dsi"><span class="dsl">Collateral</span><span class="dsv">' +
-          fn(selTot.collateralAmount) +
-          " " +
-          es(selLoop.collateraltoken || "") +
-          '</span></div><div class="dsi"><span class="dsl">Borrow</span><span class="dsv">' +
-          fn(selTot.borrowTokenAmount) +
-          " " +
-          es(selLoop.borrowtoken || "") +
-          '</span></div><div class="dsi"><span class="dsl">Collateral Wert</span><span class="dsv">' +
-          fn(selTot.supplyUsd) +
-          ' USDC</span></div><div class="dsi"><span class="dsl">Borrow Wert</span><span class="dsv">' +
-          fn(selTot.borrowUsd) +
-          " USDC</span></div></div>";
-        h +=
-          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px"><div style="background:var(--g-bg);padding:12px;border-radius:8px;border:1px solid var(--g);text-align:center"><div style="font-size:10px;color:var(--g);text-transform:uppercase">Supply</div><div style="font-size:15px;font-weight:600;color:var(--t);margin-top:4px">' +
-          fn(selTot.collateralAmount) +
-          ' ' +
-          es(selLoop.collateraltoken || '') +
-          '</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Wert: ' +
-          fn(selTot.supplyUsd) +
-          ' USDC</div><div style="font-size:12px;font-weight:600;color:' +
-          (selTot.supplyRateApr > 0 ? 'var(--g)' : selTot.supplyRateApr < 0 ? 'var(--r)' : 'var(--t2)') +
-          ';margin-top:8px;text-align:center">' +
-          (selTot.supplyRateApr > 0 ? '+' : '') +
-          selTot.supplyRateApr.toFixed(2) +
-          '% APR</div></div><div style="background:var(--r-bg);padding:12px;border-radius:8px;border:1px solid var(--r);text-align:center"><div style="font-size:10px;color:var(--r);text-transform:uppercase">Borrow</div><div style="font-size:15px;font-weight:600;color:var(--t);margin-top:4px">' +
-          fn(selTot.borrowTokenAmount) +
-          ' ' +
-          es(selLoop.borrowtoken || '') +
-          '</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Wert: ' +
-          fn(selTot.borrowUsd) +
-          ' USDC</div><div style="font-size:12px;font-weight:600;color:' +
-          (selTot.borrowRateApr > 0 ? 'var(--r)' : 'var(--t2)') +
-          ';margin-top:8px;text-align:center">' +
-          (selTot.borrowRateApr > 0 ? '-' : '') +
-          selTot.borrowRateApr.toFixed(2) +
-          '% APR</div></div></div>';
-        if (selPeg)
-          h +=
-            '<div style="margin-top:18px">' +
-            renderPegSummary(selPeg) +
-            "</div>";
-        if (selLoop.notes)
-          h +=
-            '<div class="ibx" style="margin-top:18px"><div class="sh" style="margin:0 0 10px"><h3 class="st">Notiz</h3></div><div class="loop-note">' +
-            es(selLoop.notes) +
-            "</div></div>";
-        h +=
-          '<div style="display:flex;gap:10px;margin-top:24px;flex-wrap:wrap">' +
-          (selStatus === "closed"
-            ? '<button class="bt bb" onclick="event.stopPropagation();openLoopEdit(\'' +
-              selLoop.id +
-              "')\">Bearbeiten</button>"
-            : '<button class="bt bb" onclick="event.stopPropagation();openLoopEdit(\'' +
-              selLoop.id +
-              '\')">Bearbeiten</button><button class="bt be" onclick="event.stopPropagation();closeLoop(\'' +
-              selLoop.id +
-              "')\">Schließen</button>") +
-          "</div>";
+      if (selLoop && LOOPV === "closed") {
+        h += renderLoopDetailPanel(selLoop, nw, false);
       } else {
         var activeCalc = activeL.map(function (l) {
           return { loop: l, totals: calculateLoopingTotals(l) };
@@ -5748,6 +5741,12 @@ function R(options) {
                 '%</span><span class="lt-val">' +
                 fd(l.startdate) +
                 '</span></div>';
+              if (LPI === l.id) {
+                h +=
+                  '<div style="margin:0 0 16px">' +
+                  renderLoopDetailPanel(l, nw, true) +
+                  '</div>';
+              }
             });
             h += '</div>';
           }
