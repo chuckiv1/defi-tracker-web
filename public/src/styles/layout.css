@@ -1,0 +1,126 @@
+.hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--bd);
+  background: rgba(13, 15, 19, 0.95);
+  backdrop-filter: blur(12px);
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.hl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tt {
+  font-size: 17px;
+  font-weight: 700;
+  color: #f0f2f5;
+}
+.su {
+  font-size: 10px;
+  color: var(--t4);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.hr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.nv {
+  display: flex;
+  gap: 3px;
+  background: var(--bg2);
+  border-radius: 10px;
+  padding: 3px;
+}
+.nv button {
+  background: 0 0;
+  border: none;
+  color: var(--t4);
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: "DM Sans", sans-serif;
+  white-space: nowrap;
+}
+.nv button.a {
+  background: var(--bd);
+  color: #f0f2f5;
+}
+.undo-wrap {
+  position: relative;
+}
+.undo-btn {
+  background: var(--bg2);
+  border: 1px solid var(--bd);
+  color: var(--t3);
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: "DM Sans", sans-serif;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.undo-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.undo-dd {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  background: var(--bg3);
+  border: 1px solid var(--bd2);
+  border-radius: 10px;
+  min-width: 280px;
+  z-index: 60;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.undo-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--bd);
+  cursor: pointer;
+  font-size: 12px;
+  gap: 8px;
+}
+.undo-item:hover {
+  background: var(--bg2);
+}
+.undo-item:last-child {
+  border-bottom: none;
+}
+.undo-label {
+  color: var(--t2);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.undo-time {
+  color: var(--t4);
+  font-size: 11px;
+  font-family: "JetBrains Mono", monospace;
+  white-space: nowrap;
+}
+.mn {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 20px 16px 80px;
+}

@@ -1,0 +1,48 @@
+@media (max-width: 600px) {
+  .pos-b {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 500px) {
+  .sm {
+    grid-template-columns: 1fr 1fr;
+  }
+  .sv {
+    font-size: 17px;
+  }
+  .gd {
+    grid-template-columns: 1fr;
+  }
+  .pgd {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+  .dha {
+    font-size: 24px;
+  }
+  .dhn {
+    font-size: 19px;
+  }
+}
+
+@media (max-width: 1050px) {
+  .msg-hero,
+  .msg-work {
+    grid-template-columns: 1fr;
+  }
+  .msg-kpis {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 600px) {
+  .msg-kpis,
+  .msg-grid,
+  .msg-stats,
+  .msg-row {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+  .msg-card h2 {
+    font-size: 23px;
+  }
+}

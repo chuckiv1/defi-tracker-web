@@ -1,0 +1,48 @@
+import { bindWindowFunctions } from "./legacy-bridge.js";
+
+export const dataNames = [
+  "stratIncl",
+  "sortStrategies",
+  "frfAprForSort",
+  "frfTotalApr",
+  "sortFrf",
+  "exMargin",
+  "exName",
+  "latestFunding",
+  "posIncl",
+  "runningFunding",
+  "posLiveSize",
+  "posEntrySize",
+  "posCapital",
+  "roleRank",
+  "hasRole",
+  "canManageMessages",
+  "canOpenAdmin",
+  "canManageRoles",
+  "canManageAllRoles",
+  "roleBadge",
+  "linkedTargetValue",
+  "linkedTargetOptions",
+  "linkedTargetPayload",
+  "normExchangeLabel",
+  "frfFundingPct",
+  "frfFundingAnnualRate",
+  "frfFundingAnnualDisplay",
+  "frfFundingAnnualPct",
+  "frfFundingPeriod",
+  "frfFundingRowsHtml",
+  "frfFundingSection",
+  "loopPayloadFromForm",
+  "loopTokenPrice",
+  "calculateLoopingTotals",
+  "loopSupplyValue",
+  "loopBorrowValue",
+  "loopBorrowTokenAmount",
+  "loopLeverage",
+  "loopNetApr",
+  "calcLoopData",
+];
+
+const bindings = bindWindowFunctions(dataNames);
+
+export default bindings;

@@ -1,0 +1,123 @@
+.dhd {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.dhn {
+  font-size: 22px;
+  font-weight: 700;
+  color: #f0f2f5;
+}
+.dha {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--g);
+  font-family: "JetBrains Mono", monospace;
+}
+.dha .u {
+  font-size: 14px;
+  color: var(--t3);
+}
+.bdg {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 16px;
+  margin-top: 5px;
+  margin-right: 4px;
+}
+.bdg.ac {
+  color: var(--g);
+  background: var(--gb);
+}
+.bdg.en {
+  color: var(--t3);
+  background: rgba(138, 143, 152, 0.1);
+}
+.bdg.frf {
+  color: var(--o);
+  background: var(--ob);
+}
+.bdg.hdg {
+  color: var(--p);
+  background: var(--pb);
+}
+.dsg {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+.dsi {
+  background: var(--bg2);
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.dsl {
+  font-size: 10px;
+  color: var(--t4);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.dsv {
+  font-size: 15px;
+  font-weight: 600;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--t);
+}
+.dsv.g {
+  color: var(--g);
+}
+.dsv.r {
+  color: var(--r);
+}
+.ibx {
+  background: var(--bg2);
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  padding: 16px;
+  margin-top: 10px;
+}
+.igr {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+.iti {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.itl {
+  font-size: 10px;
+  color: var(--t4);
+  text-transform: uppercase;
+}
+.itv {
+  font-size: 14px;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--t2);
+  font-weight: 500;
+}
+.nbx {
+  background: var(--bg2);
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  padding: 16px;
+  margin-top: 10px;
+  color: var(--t2);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.nem {
+  color: var(--t5);
+  font-style: italic;
+}

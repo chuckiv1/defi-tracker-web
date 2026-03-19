@@ -1,0 +1,154 @@
+.sm {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 24px;
+}
+.sc {
+  background: linear-gradient(135deg, #15171c, var(--bg3));
+  border: 1px solid var(--bd);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sl {
+  font-size: 10px;
+  color: var(--t4);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+}
+.sv {
+  font-size: 20px;
+  font-weight: 700;
+  font-family: "JetBrains Mono", monospace;
+  color: #f0f2f5;
+}
+.sv .u {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--t4);
+}
+.sv.g {
+  color: var(--g);
+}
+.sv.g .u {
+  color: var(--g);
+}
+.sv.r {
+  color: var(--r);
+}
+.sh {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.st {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--t2);
+}
+
+.cd {
+  background: var(--bg2);
+  border: 1px solid var(--bd);
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.cdh {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--bd);
+}
+.cdn {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--t);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 55%;
+}
+.cda {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--g);
+  font-family: "JetBrains Mono", monospace;
+  background: var(--gb);
+  padding: 3px 9px;
+  border-radius: 6px;
+}
+.cda.mt {
+  color: var(--r);
+  background: var(--rb);
+}
+.cda.z {
+  color: var(--t3);
+  background: rgba(138, 143, 152, 0.08);
+}
+.cdb {
+  padding: 10px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+.cdr {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  min-height: 22px;
+}
+.cdl {
+  font-size: 12px;
+  color: var(--t4);
+}
+.cdv {
+  font-size: 12px;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--t2);
+  font-weight: 500;
+}
+.cdv.g {
+  color: var(--g);
+}
+.cdv.r {
+  color: var(--r);
+}
+.cdf {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  border-top: 1px solid var(--bd);
+  gap: 12px;
+  margin-top: auto;
+}
+.cdf-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.tkb {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--y);
+  background: var(--yb);
+  padding: 2px 8px;
+  border-radius: 12px;
+  margin-left: 6px;
+}

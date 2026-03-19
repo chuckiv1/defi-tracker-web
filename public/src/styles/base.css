@@ -1,0 +1,69 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+:root {
+  --bg: #0d0f13;
+  --bg2: #14161b;
+  --bg3: #1a1d24;
+  --bd: #1e2128;
+  --bd2: #2a2e35;
+  --t: #e0e4ec;
+  --t2: #c0c4cc;
+  --t3: #8a8f98;
+  --t4: #5a5f68;
+  --t5: #3a3f48;
+  --g: #00e5a0;
+  --gb: rgba(0, 229, 160, 0.08);
+  --r: #ff6b6b;
+  --rb: rgba(255, 77, 77, 0.08);
+  --bl: #4da3ff;
+  --blb: rgba(77, 163, 255, 0.08);
+  --y: #ffc44d;
+  --yb: rgba(255, 196, 77, 0.08);
+  --p: #b48cff;
+  --pb: rgba(180, 140, 255, 0.08);
+  --o: #ff8c42;
+  --ob: rgba(255, 140, 66, 0.08);
+}
+html,
+body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--t);
+  font-family: "DM Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bd);
+  border-radius: 3px;
+}
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+}
+textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+select {
+  background: var(--bg2);
+  border: 1px solid var(--bd2);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--t);
+  font-size: 14px;
+  outline: none;
+  font-family: "JetBrains Mono", monospace;
+  width: 100%;
+}
+select:focus {
+  border-color: var(--g);
+}

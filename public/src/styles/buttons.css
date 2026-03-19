@@ -1,0 +1,110 @@
+.bt {
+  border: none;
+  cursor: pointer;
+  font-family: "DM Sans", sans-serif;
+  border-radius: 8px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.bt:active {
+  opacity: 0.8;
+}
+.bp {
+  background: linear-gradient(135deg, var(--g), #00c98b);
+  color: var(--bg);
+  padding: 10px 18px;
+  font-size: 13px;
+}
+.bs {
+  padding: 7px 14px;
+  font-size: 12px;
+}
+.be {
+  background: var(--rb);
+  color: var(--r);
+  padding: 6px 14px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.bb {
+  background: var(--blb);
+  color: var(--bl);
+  padding: 6px 14px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.by {
+  background: var(--yb);
+  color: var(--y);
+  padding: 7px 14px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.bpr {
+  background: var(--pb);
+  color: var(--p);
+  padding: 7px 14px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.bo {
+  background: var(--ob);
+  color: #fff;
+  padding: 7px 14px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.bk {
+  background: 0 0;
+  color: var(--t4);
+  font-size: 13px;
+  padding: 4px 0;
+  margin-bottom: 14px;
+}
+.bcn {
+  background: var(--bg2);
+  border: 1px solid var(--bd2);
+  color: var(--t3);
+  padding: 10px 18px;
+  font-size: 13px;
+}
+.bic {
+  background: 0 0;
+  color: var(--t5);
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.bed {
+  background: 0 0;
+  color: var(--t4);
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.bed:hover {
+  color: var(--bl);
+}
+.vtg {
+  display: flex;
+  gap: 3px;
+  background: var(--bg2);
+  border-radius: 8px;
+  padding: 2px;
+}
+.vtg button {
+  background: 0 0;
+  border: none;
+  color: var(--t4);
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+.vtg button.a {
+  background: var(--bd);
+  color: #f0f2f5;
+}
