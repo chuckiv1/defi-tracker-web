@@ -582,10 +582,10 @@ function sortIndicator(active, dir) {
     ' <span class="srt-ind">' +
     '<span class="srt-arr up' +
     (active && dir === "asc" ? ' a' : '') +
-    '">↑</span>' +
+    '">▲</span>' +
     '<span class="srt-arr dn' +
     (active && dir === "desc" ? ' a' : '') +
-    '">↓</span>' +
+    '">▼</span>' +
     '</span>'
   );
 }
@@ -5585,10 +5585,12 @@ function R(options) {
           (selStatus === "closed" ? "en" : "ac") +
           '">' +
           es(selStatus) +
-          '</span></div><div class="dha" style="font-size:20px">' +
+          '</span></div><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end"><span class="bdg ac" style="font-size:13px;padding:5px 10px">Hebel: ' +
+          selTot.leverage.toFixed(2) +
+          'x</span><div class="dha" style="font-size:20px">' +
           (selTot.netApr > 0 ? "+" : "") +
           selTot.netApr.toFixed(2) +
-          '% <span class="u">Net APR</span></div></div>';
+          '% <span class="u">Gehebelte APR</span></div></div></div>';
         h +=
           '<div class="dsg"><div class="dsi"><span class="dsl">Start</span><span class="dsv">' +
           fd(selLoop.startdate) +
@@ -5598,9 +5600,7 @@ function R(options) {
             : "Offen") +
           '</span></div><div class="dsi"><span class="dsl">Laufzeit</span><span class="dsv">' +
           selRuntime.toFixed(1) +
-          ' T</span></div><div class="dsi"><span class="dsl">Hebel</span><span class="dsv">' +
-          selTot.leverage.toFixed(2) +
-          'x</span></div><div class="dsi"><span class="dsl">Collateral</span><span class="dsv">' +
+          ' T</span></div><div class="dsi"><span class="dsl">Collateral</span><span class="dsv">' +
           fn(selTot.collateralAmount) +
           " " +
           es(selLoop.collateraltoken || "") +
@@ -5608,25 +5608,35 @@ function R(options) {
           fn(selTot.borrowTokenAmount) +
           " " +
           es(selLoop.borrowtoken || "") +
-          '</span></div><div class="dsi"><span class="dsl">Supply APR</span><span class="dsv ' +
-          (selTot.supplyRateApr > 0
-            ? "g"
-            : selTot.supplyRateApr < 0
-              ? "r"
-              : "") +
-          '">' +
-          (selTot.supplyRateApr > 0 ? "+" : "") +
-          selTot.supplyRateApr.toFixed(2) +
-          '%</span></div><div class="dsi"><span class="dsl">Borrow APR</span><span class="dsv ' +
-          (selTot.borrowRateApr > 0 ? "r" : "") +
-          '">' +
-          (selTot.borrowRateApr > 0 ? "-" : "") +
-          selTot.borrowRateApr.toFixed(2) +
-          '%</span></div><div class="dsi"><span class="dsl">Collateral Wert</span><span class="dsv">' +
+          '</span></div><div class="dsi"><span class="dsl">Collateral Wert</span><span class="dsv">' +
           fn(selTot.supplyUsd) +
           ' USDC</span></div><div class="dsi"><span class="dsl">Borrow Wert</span><span class="dsv">' +
           fn(selTot.borrowUsd) +
           " USDC</span></div></div>";
+        h +=
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px"><div style="background:var(--g-bg);padding:12px;border-radius:8px;border:1px solid var(--g);text-align:center"><div style="font-size:10px;color:var(--g);text-transform:uppercase">Supply</div><div style="font-size:15px;font-weight:600;color:var(--t);margin-top:4px">' +
+          fn(selTot.collateralAmount) +
+          ' ' +
+          es(selLoop.collateraltoken || '') +
+          '</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Wert: ' +
+          fn(selTot.supplyUsd) +
+          ' USDC</div><div style="font-size:12px;font-weight:600;color:' +
+          (selTot.supplyRateApr > 0 ? 'var(--g)' : selTot.supplyRateApr < 0 ? 'var(--r)' : 'var(--t2)') +
+          ';margin-top:8px;text-align:center">' +
+          (selTot.supplyRateApr > 0 ? '+' : '') +
+          selTot.supplyRateApr.toFixed(2) +
+          '% APR</div></div><div style="background:var(--r-bg);padding:12px;border-radius:8px;border:1px solid var(--r);text-align:center"><div style="font-size:10px;color:var(--r);text-transform:uppercase">Borrow</div><div style="font-size:15px;font-weight:600;color:var(--t);margin-top:4px">' +
+          fn(selTot.borrowTokenAmount) +
+          ' ' +
+          es(selLoop.borrowtoken || '') +
+          '</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Wert: ' +
+          fn(selTot.borrowUsd) +
+          ' USDC</div><div style="font-size:12px;font-weight:600;color:' +
+          (selTot.borrowRateApr > 0 ? 'var(--r)' : 'var(--t2)') +
+          ';margin-top:8px;text-align:center">' +
+          (selTot.borrowRateApr > 0 ? '-' : '') +
+          selTot.borrowRateApr.toFixed(2) +
+          '% APR</div></div></div>';
         if (selPeg)
           h +=
             '<div style="margin-top:18px">' +
@@ -5700,114 +5710,32 @@ function R(options) {
           if (!activeL.length)
             h += '<div class="emp">Keine aktiven Loops.</div>';
           else {
+            h +=
+              '<div class="lt"><div class="lt-hdr" style="grid-template-columns:2fr 1fr 1fr 1fr 1fr 110px"><span>Name</span><span style="text-align:right">Collateral</span><span style="text-align:right">Borrow</span><span style="text-align:right">Hebel</span><span style="text-align:center">Gehebelte APR</span><span style="text-align:right">Start</span></div>';
             activeCalc.forEach(function (entry) {
               var l = entry.loop,
-                tot = entry.totals,
-                lev = tot.leverage,
-                supAPR = tot.supplyRateApr,
-                borAPR = tot.borrowRateApr,
-                netAPR = tot.netApr,
-                peg = loopPegInfo(
-                  l.collateraltoken || l.collateralToken,
-                  l.pegreferencetoken ||
-                    l.pegReferenceToken ||
-                    l.borrowtoken ||
-                    l.borrowToken,
-                  l.pegentryprice || l.pegEntryPrice,
-                );
-              var runtimeDays = db(l.startdate, nw);
-              var sc = parseFloat(l.startcollateral || 0);
-              var startAmount = parseFloat(l.startcollateralamount || 0);
-              var startPrice = parseFloat(l.collateralprice || 0) || tot.price;
-              var ce = tot.collateralAmount;
-              var borrowUsd = tot.borrowUsd;
-              var borrowTokenAmt = tot.borrowTokenAmount;
-              h += '<div class="cd" style="margin-bottom:16px">';
+                tot = entry.totals;
               h +=
-                '<div class="cdh" style="background:var(--bg3);border-bottom:1px solid var(--bd)"><div><div class="cdn" style="max-width:100%;white-space:normal;overflow:visible;text-overflow:clip">' +
-                es(l.name) +
-                '</div><div style="font-size:12px;color:var(--t3);margin-top:2px">' +
-                fd(l.startdate) +
-                "</div></div><div style=\"flex:1;text-align:center;font-size:12px;color:var(--t3);font-family:'JetBrains Mono',monospace\">Laufzeit: " +
-                runtimeDays.toFixed(1) +
-                ' T</div><span class="bdg ac" style="font-size:13px;padding:5px 10px">Hebel: ' +
-                lev.toFixed(1) +
-                "x</span></div>";
-              h += '<div class="cdb">';
-              h +=
-                '<div style="background:var(--bg2);padding:10px;border-radius:6px;margin-bottom:12px"><div style="font-size:10px;color:var(--t4);text-transform:uppercase">Start Invest in USDC</div><div style="font-size:14px;font-weight:600;color:var(--t)">' +
-                fn(sc) +
-                ' USDC</div><div style="font-size:11px;color:var(--t3);margin-top:4px">' +
-                es(l.collateraltoken) +
-                ": " +
-                fn(startAmount) +
-                " @ $" +
-                fn(startPrice) +
-                "</div></div>";
-              h +=
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">';
-              h +=
-                '<div style="background:var(--g-bg);padding:10px;border-radius:6px;border:1px solid var(--g)"><div style="font-size:10px;color:var(--g);text-transform:uppercase">Collateral</div><div style="font-size:14px;font-weight:600;color:var(--t)">' +
-                fn(ce) +
-                " " +
-                es(l.collateraltoken) +
-                '</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Wert: ' +
+                '<div class="lt-row" style="grid-template-columns:2fr 1fr 1fr 1fr 1fr 110px" onclick="openLoopDetail(\'' +
+                l.id +
+                '\')"><span class="lt-name">' +
+                es(l.name || 'Loop') +
+                '</span><span class="lt-val">' +
                 fn(tot.supplyUsd) +
-                " USDC</div></div>";
-              h +=
-                '<div style="background:var(--r-bg);padding:10px;border-radius:6px;border:1px solid var(--r)"><div style="font-size:10px;color:var(--r);text-transform:uppercase">Borrow</div><div style="font-size:14px;font-weight:600;color:var(--t)">' +
-                fn(borrowTokenAmt) +
-                " " +
-                es(l.borrowtoken || l.collateraltoken) +
-                '</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Wert: ' +
-                fn(borrowUsd) +
-                " USDC</div></div>";
-              h += "</div>";
-              h +=
-                '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">';
-              h +=
-                '<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:6px"><div style="font-size:10px;color:var(--t4)">Supply APR</div><div style="font-size:14px;font-weight:600;color:' +
-                (supAPR > 0
-                  ? "var(--g)"
-                  : supAPR < 0
-                    ? "var(--r)"
-                    : "var(--t2)") +
+                '</span><span class="lt-val">' +
+                fn(tot.borrowUsd) +
+                '</span><span class="lt-val">' +
+                tot.leverage.toFixed(2) +
+                'x</span><span class="lt-apr' +
+                (tot.netApr > 0 ? '' : tot.netApr < 0 ? ' mt' : ' z') +
                 '">' +
-                (supAPR > 0 ? "+" : "") +
-                supAPR.toFixed(2) +
-                "%</div></div>";
-              h +=
-                '<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:6px"><div style="font-size:10px;color:var(--t4)">Borrow APR</div><div style="font-size:14px;font-weight:600;color:' +
-                (borAPR > 0 ? "var(--r)" : "var(--t2)") +
-                '">' +
-                (borAPR > 0 ? "-" : "") +
-                borAPR.toFixed(2) +
-                "%</div></div>";
-              h +=
-                '<div style="text-align:center;padding:8px;background:var(--bg2);border-radius:6px"><div style="font-size:10px;color:var(--t4)">Gehebelte APR</div><div style="font-size:14px;font-weight:600;color:' +
-                (netAPR > 0
-                  ? "var(--g)"
-                  : netAPR < 0
-                    ? "var(--r)"
-                    : "var(--t2)") +
-                '">' +
-                (netAPR > 0 ? "+" : "") +
-                netAPR.toFixed(2) +
-                "%</div></div>";
-              h +=
-                "</div>" +
-                (peg ? renderPegSummary(peg) : "") +
-                (l.notes
-                  ? '<div class="loop-note">' + es(l.notes) + "</div>"
-                  : "");
-              h +=
-                '<div class="cdf"><button class="bt bb" onclick="event.stopPropagation();openLoopEdit(\'' +
-                l.id +
-                '\')">Bearbeiten</button><button class="bt be" onclick="event.stopPropagation();closeLoop(\'' +
-                l.id +
-                "')\">Schließen</button></div>";
-              h += "</div></div>";
+                (tot.netApr > 0 ? '+' : '') +
+                tot.netApr.toFixed(2) +
+                '%</span><span class="lt-val">' +
+                fd(l.startdate) +
+                '</span></div>';
             });
+            h += '</div>';
           }
         } else {
           if (!closedL.length)

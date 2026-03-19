@@ -41,13 +41,18 @@
 }
 .srt-ind {
   display: inline-flex;
-  gap: 2px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
   margin-left: 6px;
-  font-size: 10px;
+  font-size: 8px;
+  line-height: 0.75;
   vertical-align: middle;
 }
 .srt-arr {
   color: var(--t5);
+  display: block;
 }
 .srt-arr.a {
   color: var(--o);
