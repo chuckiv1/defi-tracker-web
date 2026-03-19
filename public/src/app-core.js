@@ -14,8 +14,10 @@ var V = "active",
   LPI = null,
   UD = false;
 var VW = "grid",
-  STRAT_SORT = "size",
-  FRF_SORT = "size";
+  STRAT_SORT = "invest",
+  STRAT_SORT_DIR = "desc",
+  FRF_SORT = "size",
+  FRF_SORT_DIR = "desc";
 var M = {};
 var PRICES = {};
 var EXP = {};
@@ -262,7 +264,9 @@ function saveUi() {
         LPI: LPI,
         VW: VW,
         STRAT_SORT: STRAT_SORT,
+        STRAT_SORT_DIR: STRAT_SORT_DIR,
         FRF_SORT: FRF_SORT,
+        FRF_SORT_DIR: FRF_SORT_DIR,
         EXP: EXP,
         SH: SHOW_HINTS,
       }),
@@ -282,7 +286,9 @@ function restoreUi() {
     if (st.LPI !== undefined) LPI = st.LPI || null;
     if (st.VW) VW = st.VW;
     if (st.STRAT_SORT) STRAT_SORT = st.STRAT_SORT;
+    if (st.STRAT_SORT_DIR) STRAT_SORT_DIR = st.STRAT_SORT_DIR;
     if (st.FRF_SORT) FRF_SORT = st.FRF_SORT;
+    if (st.FRF_SORT_DIR) FRF_SORT_DIR = st.FRF_SORT_DIR;
     if (st.EXP && typeof st.EXP === "object") EXP = st.EXP;
     if (st.SH !== undefined) SHOW_HINTS = !!st.SH;
   } catch (e) {}
@@ -305,10 +311,29 @@ function normUi() {
   if (VW !== "grid" && VW !== "list") VW = "grid";
   if (FRFV !== "open" && FRFV !== "closed") FRFV = "open";
   if (LOOPV !== "open" && LOOPV !== "closed") LOOPV = "open";
-  if (["size", "az", "za", "apr", "runtime"].indexOf(STRAT_SORT) === -1)
-    STRAT_SORT = "size";
-  if (["size", "az", "za", "apr", "runtime"].indexOf(FRF_SORT) === -1)
+  if (STRAT_SORT === "size") STRAT_SORT = "invest";
+  if (STRAT_SORT === "az") {
+    STRAT_SORT = "name";
+    STRAT_SORT_DIR = "asc";
+  }
+  if (STRAT_SORT === "za") {
+    STRAT_SORT = "name";
+    STRAT_SORT_DIR = "desc";
+  }
+  if (!["name", "invest", "rewards", "pnl", "apr", "runtime"].includes(STRAT_SORT))
+    STRAT_SORT = "invest";
+  if (!["asc", "desc"].includes(STRAT_SORT_DIR)) STRAT_SORT_DIR = "desc";
+  if (FRF_SORT === "az") {
+    FRF_SORT = "token";
+    FRF_SORT_DIR = "asc";
+  }
+  if (FRF_SORT === "za") {
+    FRF_SORT = "token";
+    FRF_SORT_DIR = "desc";
+  }
+  if (!["token", "type", "size", "amount", "pnl", "apr", "runtime"].includes(FRF_SORT))
     FRF_SORT = "size";
+  if (!["asc", "desc"].includes(FRF_SORT_DIR)) FRF_SORT_DIR = "desc";
   if (!EXP || typeof EXP !== "object") EXP = {};
   if (V === "detail" && (!SI || !S.find((x) => x.id === SI))) {
     SI = null;
@@ -540,32 +565,86 @@ function wa(s, e) {
 function stratIncl(s) {
   return s.includeInTotalApr !== false;
 }
+function sortDirMul(dir) {
+  return dir === "asc" ? 1 : -1;
+}
+function cmpText(a, b) {
+  return String(a || "").localeCompare(String(b || ""), "de");
+}
+function cmpNumber(a, b) {
+  var av = Number.isFinite(a) ? a : parseFloat(a) || 0,
+    bv = Number.isFinite(b) ? b : parseFloat(b) || 0;
+  if (av === bv) return 0;
+  return av < bv ? -1 : 1;
+}
+function sortIndicator(active, dir) {
+  if (!active) return "";
+  return dir === "asc" ? " <span class=\"srt-ind\">↑</span>" : " <span class=\"srt-ind\">↓</span>";
+}
+function sortableHeader(label, type, key, extraStyle) {
+  var active = type === "strategy" ? STRAT_SORT === key : FRF_SORT === key,
+    dir = type === "strategy" ? STRAT_SORT_DIR : FRF_SORT_DIR,
+    fn = type === "strategy" ? "toggleStrategySort" : "toggleFrfSort";
+  return (
+    '<button class="srt-h' +
+    (active ? ' a' : '') +
+    '"' +
+    (extraStyle ? ' style="' + extraStyle + '"' : '') +
+    ' onclick="event.stopPropagation();' +
+    fn +
+    '(\'' +
+    key +
+    '\')">' +
+    label +
+    sortIndicator(active, dir) +
+    '</button>'
+  );
+}
+function toggleStrategySort(key) {
+  if (STRAT_SORT === key) STRAT_SORT_DIR = STRAT_SORT_DIR === "desc" ? "asc" : "desc";
+  else {
+    STRAT_SORT = key;
+    STRAT_SORT_DIR = "desc";
+  }
+  PG_ACT = 1;
+  PG_PAST = 1;
+  R();
+}
+function toggleFrfSort(key) {
+  if (FRF_SORT === key) FRF_SORT_DIR = FRF_SORT_DIR === "desc" ? "asc" : "desc";
+  else {
+    FRF_SORT = key;
+    FRF_SORT_DIR = "desc";
+  }
+  PG_FRFO = 1;
+  PG_FRFC = 1;
+  R();
+}
 function sortStrategies(arr, isPast) {
   var xs = arr.slice(),
-    now = new Date().toISOString();
+    now = new Date().toISOString(),
+    dir = sortDirMul(STRAT_SORT_DIR);
   xs.sort((a, b) => {
     var av = 0,
       bv = 0,
-      an = (a.name || "").toLowerCase(),
-      bn = (b.name || "").toLowerCase();
-    if (STRAT_SORT === "az") return an.localeCompare(bn, "de");
-    if (STRAT_SORT === "za") return bn.localeCompare(an, "de");
-    if (STRAT_SORT === "apr") {
-      av = wa(a, isPast ? a.endedAt || now : now);
-      bv = wa(b, isPast ? b.endedAt || now : now);
-      if (bv !== av) return bv - av;
-      return an.localeCompare(bn, "de");
+      cmp = 0,
+      endA = isPast ? a.endedAt || now : now,
+      endB = isPast ? b.endedAt || now : now;
+    if (STRAT_SORT === "name") cmp = cmpText(a.name, b.name);
+    else if (STRAT_SORT === "invest") cmp = cmpNumber(ci(a), ci(b));
+    else if (STRAT_SORT === "rewards") cmp = cmpNumber(tg(a), tg(b));
+    else if (STRAT_SORT === "pnl") cmp = cmpNumber(tp(a, false), tp(b, false));
+    else if (STRAT_SORT === "apr") {
+      av = wa(a, endA);
+      bv = wa(b, endB);
+      cmp = cmpNumber(av, bv);
+    } else if (STRAT_SORT === "runtime") {
+      av = db(a.startDate, endA);
+      bv = db(b.startDate, endB);
+      cmp = cmpNumber(av, bv);
     }
-    if (STRAT_SORT === "runtime") {
-      av = db(a.startDate, isPast ? a.endedAt || now : now);
-      bv = db(b.startDate, isPast ? b.endedAt || now : now);
-      if (bv !== av) return bv - av;
-      return an.localeCompare(bn, "de");
-    }
-    av = ci(a);
-    bv = ci(b);
-    if (bv !== av) return bv - av;
-    return an.localeCompare(bn, "de");
+    if (cmp !== 0) return cmp * dir;
+    return cmpText(a.name, b.name);
   });
   return xs;
 }
@@ -591,30 +670,21 @@ function frfTotalApr(arr) {
   return totalCap > 0 ? totalWeighted / totalCap : 0;
 }
 function sortFrf(arr) {
-  var xs = arr.slice();
+  var xs = arr.slice(),
+    dir = sortDirMul(FRF_SORT_DIR);
   xs.sort((a, b) => {
     var av = 0,
       bv = 0,
-      an = (a.token || "").toLowerCase(),
-      bn = (b.token || "").toLowerCase();
-    if (FRF_SORT === "az") return an.localeCompare(bn, "de");
-    if (FRF_SORT === "za") return bn.localeCompare(an, "de");
-    if (FRF_SORT === "apr") {
-      av = frfAprForSort(a);
-      bv = frfAprForSort(b);
-      if (bv !== av) return bv - av;
-      return an.localeCompare(bn, "de");
-    }
-    if (FRF_SORT === "runtime") {
-      av = db(a.startDate, a.endedAt || new Date().toISOString());
-      bv = db(b.startDate, b.endedAt || new Date().toISOString());
-      if (bv !== av) return bv - av;
-      return an.localeCompare(bn, "de");
-    }
-    av = posLiveSize(a);
-    bv = posLiveSize(b);
-    if (bv !== av) return bv - av;
-    return an.localeCompare(bn, "de");
+      cmp = 0;
+    if (FRF_SORT === "token") cmp = cmpText(a.token, b.token);
+    else if (FRF_SORT === "type") cmp = cmpText(a.type === "hedge" ? "Hedge" : "FRF", b.type === "hedge" ? "Hedge" : "FRF");
+    else if (FRF_SORT === "size") cmp = cmpNumber(posLiveSize(a), posLiveSize(b));
+    else if (FRF_SORT === "amount") cmp = cmpNumber(a.tokenAmount, b.tokenAmount);
+    else if (FRF_SORT === "pnl") cmp = cmpNumber(posPnl(a), posPnl(b));
+    else if (FRF_SORT === "apr") cmp = cmpNumber(frfAprForSort(a), frfAprForSort(b));
+    else if (FRF_SORT === "runtime") cmp = cmpNumber(db(a.startDate, a.endedAt || new Date().toISOString()), db(b.startDate, b.endedAt || new Date().toISOString()));
+    if (cmp !== 0) return cmp * dir;
+    return cmpText(a.token, b.token);
   });
   return xs;
 }
@@ -4179,17 +4249,7 @@ function R(options) {
       h +=
         '<div class="sh"><h2 class="st">Aktive Strategien</h2><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input id="src-act" type="text" placeholder="Suche..." value="' +
         es(SEARCH_ACT) +
-        '" oninput="SEARCH_ACT=this.value;PG_ACT=1;R()" style="width:140px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t);font-size:13px"><select style="width:180px;padding:6px 12px;font-size:13px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t)" onchange="STRAT_SORT=this.value;PG_ACT=1;R()"><option value="size" ' +
-        (STRAT_SORT === "size" ? "selected" : "") +
-        '>Positionsgröße</option><option value="az" ' +
-        (STRAT_SORT === "az" ? "selected" : "") +
-        '>A-Z</option><option value="za" ' +
-        (STRAT_SORT === "za" ? "selected" : "") +
-        '>Z-A</option><option value="apr" ' +
-        (STRAT_SORT === "apr" ? "selected" : "") +
-        '>APR</option><option value="runtime" ' +
-        (STRAT_SORT === "runtime" ? "selected" : "") +
-        '>Laufzeit</option></select><div class="vtg"><button class="' +
+        '" oninput="SEARCH_ACT=this.value;PG_ACT=1;R()" style="width:140px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t);font-size:13px"><div class="srt-hnt">Sortierung im Tabellenkopf</div><div class="vtg"><button class="' +
         (VW === "grid" ? "a" : "") +
         '" onclick="VW=\'grid\';R()">▦</button><button class="' +
         (VW === "list" ? "a" : "") +
@@ -4211,7 +4271,14 @@ function R(options) {
         );
         if (VW === "list") {
           h +=
-            '<div class="lt"><div class="lt-hdr" style="column-gap:16px"><span>Name</span><span style="text-align:right">Invest</span><span style="text-align:right">Rewards</span><span style="text-align:right">PNL</span><span style="text-align:right;padding-right:16px">Laufzeit</span><span style="text-align:center">APR</span><span></span></div>';
+            '<div class="lt"><div class="lt-hdr" style="column-gap:16px">' +
+            sortableHeader('Name', 'strategy', 'name') +
+            sortableHeader('Invest', 'strategy', 'invest', 'text-align:right') +
+            sortableHeader('Rewards', 'strategy', 'rewards', 'text-align:right') +
+            sortableHeader('PNL', 'strategy', 'pnl', 'text-align:right') +
+            sortableHeader('Laufzeit', 'strategy', 'runtime', 'text-align:right;padding-right:16px') +
+            sortableHeader('APR', 'strategy', 'apr', 'text-align:center') +
+            '<span></span></div>';
           pgAV.forEach(function (s) {
             h += cardH(s, false);
           });
@@ -4255,17 +4322,7 @@ function R(options) {
       h +=
         '<div class="sh"><div></div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input id="src-past" type="text" placeholder="Suche..." value="' +
         es(SEARCH_PAST) +
-        '" oninput="SEARCH_PAST=this.value;PG_PAST=1;R()" style="width:140px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t);font-size:13px"><select style="width:180px;padding:6px 12px;font-size:13px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t)" onchange="STRAT_SORT=this.value;PG_PAST=1;R()"><option value="size" ' +
-        (STRAT_SORT === "size" ? "selected" : "") +
-        '>Positionsgröße</option><option value="az" ' +
-        (STRAT_SORT === "az" ? "selected" : "") +
-        '>A-Z</option><option value="za" ' +
-        (STRAT_SORT === "za" ? "selected" : "") +
-        '>Z-A</option><option value="apr" ' +
-        (STRAT_SORT === "apr" ? "selected" : "") +
-        '>APR</option><option value="runtime" ' +
-        (STRAT_SORT === "runtime" ? "selected" : "") +
-        '>Laufzeit</option></select><div class="vtg"><button class="' +
+        '" oninput="SEARCH_PAST=this.value;PG_PAST=1;R()" style="width:140px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t);font-size:13px"><div class="srt-hnt">Sortierung im Tabellenkopf</div><div class="vtg"><button class="' +
         (VW === "grid" ? "a" : "") +
         '" onclick="VW=\'grid\';R()">▦</button><button class="' +
         (VW === "list" ? "a" : "") +
@@ -4287,7 +4344,14 @@ function R(options) {
         );
         if (VW === "list") {
           h +=
-            '<div class="lt"><div class="lt-hdr" style="column-gap:16px"><span>Name</span><span style="text-align:right">Invest</span><span style="text-align:right">Rewards</span><span style="text-align:right">PNL</span><span style="text-align:right;padding-right:16px">Laufzeit</span><span style="text-align:center">APR</span><span></span></div>';
+            '<div class="lt"><div class="lt-hdr" style="column-gap:16px">' +
+            sortableHeader('Name', 'strategy', 'name') +
+            sortableHeader('Invest', 'strategy', 'invest', 'text-align:right') +
+            sortableHeader('Rewards', 'strategy', 'rewards', 'text-align:right') +
+            sortableHeader('PNL', 'strategy', 'pnl', 'text-align:right') +
+            sortableHeader('Laufzeit', 'strategy', 'runtime', 'text-align:right;padding-right:16px') +
+            sortableHeader('APR', 'strategy', 'apr', 'text-align:center') +
+            '<span></span></div>';
           pgPA.forEach(function (s) {
             h += cardH(s, true);
           });
@@ -4844,17 +4908,7 @@ function R(options) {
         closedPos.length +
         ')</button></div></div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input id="src-frf" type="text" placeholder="Suche..." value="' +
         es(SEARCH_FRF) +
-        '" oninput="SEARCH_FRF=this.value;PG_FRFO=1;PG_FRFC=1;R()" style="width:140px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t);font-size:13px"><select style="width:180px;padding:6px 12px;font-size:13px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t)" onchange="FRF_SORT=this.value;PG_FRFO=1;PG_FRFC=1;R()"><option value="size" ' +
-        (FRF_SORT === "size" ? "selected" : "") +
-        '>Positionsgröße</option><option value="az" ' +
-        (STRAT_SORT === "az" ? "selected" : "") +
-        '>A-Z</option><option value="za" ' +
-        (STRAT_SORT === "za" ? "selected" : "") +
-        '>Z-A</option><option value="apr" ' +
-        (STRAT_SORT === "apr" ? "selected" : "") +
-        '>APR</option><option value="runtime" ' +
-        (STRAT_SORT === "runtime" ? "selected" : "") +
-        '>Laufzeit</option></select><button class="bt bo" onclick="M.fpos=1;R()"><span style="font-size:17px">+</span> Position</button></div></div>';
+        '" oninput="SEARCH_FRF=this.value;PG_FRFO=1;PG_FRFC=1;R()" style="width:140px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t);font-size:13px"><div class="srt-hnt">Sortierung im Tabellenkopf</div><button class="bt bo" onclick="M.fpos=1;R()"><span style="font-size:17px">+</span> Position</button></div></div>';
       var shownPos = sortFrf(window.FRFV === "open" ? openPos : closedPos);
       if (SEARCH_FRF)
         shownPos = shownPos.filter((p) =>
@@ -4875,7 +4929,14 @@ function R(options) {
           (isO ? PG_FRFO : PG_FRFC) * ITEMS_PER_PAGE,
         );
         h +=
-          '<div class="lt"><div class="lt-hdr" style="grid-template-columns:1fr .7fr 1.1fr 1fr .88fr 90px;column-gap:18px"><span>Token</span><span style="text-align:center">Typ</span><span style="text-align:right">Pos.-Größe</span><span style="text-align:right">Tokenmenge</span><span style="text-align:right;padding-right:14px">PNL aktuell</span><span style="text-align:center">APR</span></div>';
+          '<div class="lt"><div class="lt-hdr" style="grid-template-columns:1fr .7fr 1.1fr 1fr .88fr 90px;column-gap:18px">' +
+          sortableHeader('Token', 'frf', 'token') +
+          sortableHeader('Typ', 'frf', 'type', 'text-align:center') +
+          sortableHeader('Pos.-Größe', 'frf', 'size', 'text-align:right') +
+          sortableHeader('Tokenmenge', 'frf', 'amount', 'text-align:right') +
+          sortableHeader('PNL aktuell', 'frf', 'pnl', 'text-align:right;padding-right:14px') +
+          sortableHeader('APR', 'frf', 'apr', 'text-align:center') +
+          '</div>';
         pgFRF.forEach(function (p) {
           var pnl = posPnl(p),
             d = db(p.startDate, p.endedAt || nw),
@@ -6429,6 +6490,13 @@ const legacyFunctionNames = [
   "bp",
   "wa",
   "stratIncl",
+  "sortDirMul",
+  "cmpText",
+  "cmpNumber",
+  "sortIndicator",
+  "sortableHeader",
+  "toggleStrategySort",
+  "toggleFrfSort",
   "sortStrategies",
   "frfAprForSort",
   "frfTotalApr",
