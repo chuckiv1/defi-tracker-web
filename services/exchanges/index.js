@@ -531,10 +531,14 @@ function createExchangeService({ db, fs, path, WSClient, fetchImpl, baseDir }) {
   async function getVariationalFunding(token, exchangeName) {
     const normalized = normalizeLookupSymbol(token, 20);
     if (!normalized) throw new Error('Ungueltiges Variational-Symbol');
+    const supported = await discoverVariationalSymbols();
+    if (!supported.some((item) => item && String(item.symbol || '').toUpperCase() === normalized)) {
+      throw new Error(`Variational-Markt fuer ${normalized} nicht verfuegbar`);
+    }
     const listings = await getVariationalStatsListings();
     await captureVariationalFundingSnapshotsForSymbols([normalized], listings);
     const listing = listings.find((item) => item && String(item.ticker || '').toUpperCase() === normalized);
-    if (!listing) throw new Error(`Variational-Markt fuer ${normalized} nicht gefunden`);
+    if (!listing) throw new Error(`Variational-Markt fuer ${normalized} nicht verfuegbar`);
     const settled = getVariationalSettlementEntries(normalized);
     return buildFundingPayload('variational', exchangeName, normalized, normalized, listing.funding_rate, parseFloat(listing.funding_interval_s) || 0, settled, { historySource: settled.length ? 'snapshot' : 'pending' });
   }
@@ -633,6 +637,10 @@ function createExchangeService({ db, fs, path, WSClient, fetchImpl, baseDir }) {
   async function getVariationalQuote(token, mode, exchangeName) {
     const normalized = normalizeLookupSymbol(token, 20);
     if (!normalized) throw new Error('Ungueltiges Variational-Symbol');
+    const supported = await discoverVariationalSymbols();
+    if (!supported.some((item) => item && String(item.symbol || '').toUpperCase() === normalized)) {
+      throw new Error(`Variational-Markt fuer ${normalized} nicht verfuegbar`);
+    }
     return new Promise((resolve, reject) => {
       const socket = new WSClient('wss://omni-ws-server.prod.ap-northeast-1.variational.io/prices');
       let done = false;

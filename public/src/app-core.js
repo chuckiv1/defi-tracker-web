@@ -2558,6 +2558,22 @@ function frfFundingSection(title, key, funding) {
     "</div>"
   );
 }
+function frfLiveUnavailable(data) {
+  return !!(
+    data &&
+    (data.error ||
+      !Number.isFinite(parseFloat(data.price)) ||
+      !(parseFloat(data.price) > 0))
+  );
+}
+function frfFundingUnavailable(funding) {
+  return !!(
+    !funding ||
+    funding.error ||
+    funding.currentRate === null ||
+    funding.currentRate === undefined
+  );
+}
 
 function hCr() {
   var n = document.getElementById("f-n").value.trim(),
@@ -5185,17 +5201,13 @@ function R(options) {
           longLive = live && live.long ? live.long : null;
         var liveBtn = frfLiveButtonLabel(fp.id);
         var shortLivePrice =
-          shortLive &&
-          Number.isFinite(parseFloat(shortLive.price)) &&
-          parseFloat(shortLive.price) > 0
+          !frfLiveUnavailable(shortLive)
             ? "$" + fpr(parseFloat(shortLive.price))
-            : "—";
+            : "nicht verfügbar";
         var longLivePrice =
-          longLive &&
-          Number.isFinite(parseFloat(longLive.price)) &&
-          parseFloat(longLive.price) > 0
+          !frfLiveUnavailable(longLive)
             ? "$" + fpr(parseFloat(longLive.price))
-            : "—";
+            : "nicht verfügbar";
         var shortLivePnl =
           shortLive &&
           !shortLive.error &&
@@ -5316,8 +5328,8 @@ function R(options) {
           "</span>" +
           (!isClosed
             ? '<span class="itv" style="font-size:12px;color:var(--t3)">Live: ' +
-              (shortLive && shortLive.error
-                ? es(shortLive.error)
+              (frfLiveUnavailable(shortLive)
+                ? "nicht verfügbar"
                 : shortLivePrice) +
               (shortLiveMeta
                 ? ' <span style="font-size:10px;color:var(--t4)">(' +
@@ -5335,7 +5347,7 @@ function R(options) {
                 ? "—"
                 : (shortLivePnl >= 0 ? "+" : "") + fn(shortLivePnl) + " USDC") +
               "</span>" +
-              (shortFunding && shortFunding.currentRate !== null
+              (!frfFundingUnavailable(shortFunding)
                 ? '<span class="itv" style="font-size:12px;color:var(--y);cursor:pointer" onclick="tgl(\'' +
                   shortFundingKey +
                   "')\">Funding: " +
@@ -5346,7 +5358,7 @@ function R(options) {
                   " / " +
                   frfFundingPeriod(shortFunding.intervalSeconds) +
                   "</span>"
-                : "")
+                : '<span class="itv" style="font-size:12px;color:var(--t3)">Funding: nicht verfügbar</span>')
             : "") +
           '</div><div class="iti"><span class="itl">Long</span><span class="itv">' +
           (fp.longIsSpot ? "Spot" : es(exName(fp.longExchangeId))) +
@@ -5355,8 +5367,8 @@ function R(options) {
           "</span>" +
           (!isClosed
             ? '<span class="itv" style="font-size:12px;color:var(--t3)">Live: ' +
-              (longLive && longLive.error
-                ? es(longLive.error)
+              (frfLiveUnavailable(longLive)
+                ? "nicht verfügbar"
                 : longLivePrice) +
               (longLiveMeta
                 ? ' <span style="font-size:10px;color:var(--t4)">(' +
@@ -5374,7 +5386,7 @@ function R(options) {
                 ? "—"
                 : (longLivePnl >= 0 ? "+" : "") + fn(longLivePnl) + " USDC") +
               "</span>" +
-              (longFunding && longFunding.currentRate !== null
+              (!fp.longIsSpot && !frfFundingUnavailable(longFunding)
                 ? '<span class="itv" style="font-size:12px;color:var(--y);cursor:pointer" onclick="tgl(\'' +
                   longFundingKey +
                   "')\">Funding: " +
@@ -5385,16 +5397,18 @@ function R(options) {
                   " / " +
                   frfFundingPeriod(longFunding.intervalSeconds) +
                   "</span>"
-                : "")
+                : !fp.longIsSpot
+                  ? '<span class="itv" style="font-size:12px;color:var(--t3)">Funding: nicht verfügbar</span>'
+                  : "")
             : "") +
           "</div></div></div>";
-        if (!isClosed && shortFunding && shortFunding.currentRate !== null)
+        if (!isClosed && !frfFundingUnavailable(shortFunding))
           h += frfFundingSection(
             "Short Funding",
             shortFundingKey,
             shortFunding,
           );
-        if (!isClosed && longFunding && longFunding.currentRate !== null)
+        if (!isClosed && !frfFundingUnavailable(longFunding))
           h += frfFundingSection("Long Funding", longFundingKey, longFunding);
         if (fp.endedAt) {
           h +=
