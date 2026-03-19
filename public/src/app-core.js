@@ -2578,20 +2578,36 @@ function hFemm() {
 function hFpos() {
   var lg = document.getElementById("f-plg").value,
     shortChoice = frfTokenChoice("new", "short"),
-    longChoice = frfTokenChoice("new", "long"),
-    asset = (shortChoice.asset || longChoice.asset || "").trim(),
+    longChoice = frfTokenChoice("new", "long");
+  // Fallback: wenn kein Suggestion-Klick erfolgte aber der User Text eingetippt hat,
+  // werden display-Wert als asset/market genutzt (direkte Eingabe ohne Autocomplete).
+  if (!shortChoice.asset && shortChoice.display) {
+    shortChoice.asset = shortChoice.display.toUpperCase();
+    shortChoice.market = shortChoice.display.toUpperCase();
+  }
+  if (!longChoice.asset && longChoice.display) {
+    longChoice.asset = longChoice.display.toUpperCase();
+    longChoice.market = longChoice.display.toUpperCase();
+  }
+  var asset = (shortChoice.asset || longChoice.asset || "").trim(),
     coingeckoKey = (
       asset ||
       shortChoice.display ||
       longChoice.display ||
       ""
     ).toUpperCase();
-  if (
-    !shortChoice.market ||
-    !(lg === "_spot" ? longChoice.market || asset : longChoice.market) ||
-    !asset
-  )
+  if (!asset) {
+    alert("Bitte Token-Symbol eingeben (z.B. BTC, ETH, SOL).");
     return;
+  }
+  if (!shortChoice.market) {
+    alert("Bitte Short-Token eingeben.");
+    return;
+  }
+  if (!(lg === "_spot" ? longChoice.market || asset : longChoice.market)) {
+    alert("Bitte Long-Token eingeben.");
+    return;
+  }
   var sd = document.getElementById("f-psd").value,
     st = document.getElementById("f-pst").value;
   var startDate = sd
@@ -2633,8 +2649,17 @@ function hFepos() {
   var tp = document.getElementById("f-eptype").value;
   var lg = document.getElementById("f-eplg").value;
   var shortChoice = frfTokenChoice("edit", "short"),
-    longChoice = frfTokenChoice("edit", "long"),
-    asset = (shortChoice.asset || longChoice.asset || fp.token || "").trim(),
+    longChoice = frfTokenChoice("edit", "long");
+  // Fallback: direkte Eingabe ohne Autocomplete-Auswahl
+  if (!shortChoice.asset && shortChoice.display) {
+    shortChoice.asset = shortChoice.display.toUpperCase();
+    shortChoice.market = shortChoice.display.toUpperCase();
+  }
+  if (!longChoice.asset && longChoice.display) {
+    longChoice.asset = longChoice.display.toUpperCase();
+    longChoice.market = longChoice.display.toUpperCase();
+  }
+  var asset = (shortChoice.asset || longChoice.asset || fp.token || "").trim(),
     coingeckoKey = (asset || fp.token || "").toUpperCase();
   var sd = document.getElementById("f-epsd").value,
     st = document.getElementById("f-epst").value;
