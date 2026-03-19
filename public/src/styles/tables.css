@@ -40,12 +40,17 @@
   color: var(--t2);
 }
 .srt-ind {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 6px;
   font-size: 10px;
+  vertical-align: middle;
 }
-.srt-hnt {
-  font-size: 11px;
-  color: var(--t4);
-  padding: 0 6px;
+.srt-arr {
+  color: var(--t5);
+}
+.srt-arr.a {
+  color: var(--o);
 }
 .lt-row {
   display: grid;

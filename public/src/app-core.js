@@ -578,8 +578,16 @@ function cmpNumber(a, b) {
   return av < bv ? -1 : 1;
 }
 function sortIndicator(active, dir) {
-  if (!active) return "";
-  return dir === "asc" ? " <span class=\"srt-ind\">↑</span>" : " <span class=\"srt-ind\">↓</span>";
+  return (
+    ' <span class="srt-ind">' +
+    '<span class="srt-arr up' +
+    (active && dir === "asc" ? ' a' : '') +
+    '">↑</span>' +
+    '<span class="srt-arr dn' +
+    (active && dir === "desc" ? ' a' : '') +
+    '">↓</span>' +
+    '</span>'
+  );
 }
 function sortableHeader(label, type, key, extraStyle) {
   var active = type === "strategy" ? STRAT_SORT === key : FRF_SORT === key,
@@ -3887,12 +3895,179 @@ function renderMessagesView() {
   return h;
 }
 
+function renderGlobalBackground() {
+  if (typeof S === "undefined" || !Array.isArray(S)) return;
+  var loops = Array.isArray(LO) ? LO : [],
+    hasData = S.length > 0 || loops.length > 0,
+    existingBg = document.getElementById("dynamic-bg"),
+    existingStyle = document.getElementById("dynamic-bg-style");
+
+  if (!existingStyle) {
+    document.head.insertAdjacentHTML(
+      "beforeend",
+      '<style id="dynamic-bg-style">#app{position:relative;z-index:1;isolation:isolate}#dynamic-bg{position:fixed;top:-20%;left:-10%;width:120%;height:140%;z-index:0;pointer-events:none;transform:rotate(-8deg) scale(1.1);transform-origin:center center;overflow:hidden}#dynamic-bg .dyn-grid{position:absolute;inset:0;opacity:.04;background-image:linear-gradient(to right, rgba(255,255,255,.05) 1px, transparent 1px),linear-gradient(to bottom, rgba(255,255,255,.05) 1px, transparent 1px);background-size:60px 60px;mask-image:radial-gradient(circle at center, black 10%, transparent 80%);-webkit-mask-image:radial-gradient(circle at center, black 10%, transparent 80%)}#dynamic-bg .dyn-logo{mix-blend-mode:screen}@keyframes dynPanChart{0%{transform:translateX(0)}100%{transform:translateX(-1500px)}} </style>',
+    );
+  }
+
+  if (existingBg) {
+    if (existingBg.getAttribute("data-real") === "true" && !hasData) return;
+    existingBg.remove();
+  }
+
+  var items = [];
+  (S || []).forEach(function (s) {
+    items.push({
+      name: s.name,
+      val: (window.wa ? wa(s) : 0).toFixed(2) + "% APR",
+      status: s.endedAt ? "Beendet" : "Aktiv",
+    });
+  });
+  loops.forEach(function (l) {
+    var totals = window.calculateLoopingTotals ? calculateLoopingTotals(l) : null;
+    items.push({
+      name:
+        (l.collateraltoken || l.collateralToken || "") +
+        " / " +
+        (l.borrowtoken || l.borrowToken || ""),
+      val: ((totals && totals.netApr) || 0).toFixed(2) + "% APR",
+      status: l.status,
+    });
+  });
+  var isReal = items.length > 0;
+
+  if (!items.length) {
+    items.push({ name: "Aborean USDC/WETH", val: "12.5% APR", status: "Aktiv" });
+    items.push({ name: "Paradex Vault", val: "8.2% APR", status: "Aktiv" });
+    items.push({ name: "Aero cbBTC", val: "15.0% APR", status: "Aktiv" });
+    items.push({ name: "Avax Loop", val: "9.1% APR", status: "Aktiv" });
+  }
+
+  function getL(n) {
+    var t = (n || "").toLowerCase();
+    if (t.indexOf("usdc") > -1) return "usd-coin-usdc-logo.svg";
+    if (t.indexOf("usdt") > -1) return "tether-usdt-logo.svg";
+    if (t.indexOf("eth") > -1) return "ethereum-eth-logo.svg";
+    if (t.indexOf("btc") > -1) return "bitcoin-btc-logo.svg";
+    if (t.indexOf("avax") > -1) return "avalanche-avax-logo.svg";
+    if (t.indexOf("sol") > -1) return "solana-sol-logo.svg";
+    if (t.indexOf("aave") > -1) return "aave-aave-logo.svg";
+    if (t.indexOf("pendle") > -1) return "pendle-pendle-logo.svg";
+    if (t.indexOf("link") > -1 || t.indexOf("chainlink") > -1) return "chainlink-link-logo.svg";
+    if (t.indexOf("arb") > -1) return "arbitrum-arb-logo.svg";
+    if (t.indexOf("op") > -1) return "optimism-op-logo.svg";
+    if (t.indexOf("uni") > -1) return "uniswap-uni-logo.svg";
+    return null;
+  }
+
+  var pathPoints = [
+      { x: 80, y: 380 },
+      { x: 180, y: 290 },
+      { x: 280, y: 360 },
+      { x: 380, y: 410 },
+      { x: 480, y: 490 },
+      { x: 580, y: 460 },
+      { x: 680, y: 410 },
+      { x: 780, y: 260 },
+      { x: 880, y: 310 },
+      { x: 980, y: 340 },
+      { x: 1080, y: 440 },
+      { x: 1180, y: 410 },
+      { x: 1280, y: 360 },
+      { x: 1380, y: 440 },
+      { x: 1480, y: 410 },
+    ],
+    nodesHtml = "",
+    displayItems = items.slice();
+
+  if (displayItems.length > 15)
+    displayItems = displayItems.sort(function () {
+      return 0.5 - Math.random();
+    }).slice(0, 15);
+
+  displayItems.forEach(function (item, i) {
+    var idx = Math.floor((i / displayItems.length) * pathPoints.length),
+      pt = pathPoints[idx] || pathPoints[0],
+      dur = 3 + (i % 4) + Math.random(),
+      isEnded = item.status === "Beendet" || item.status === "closed",
+      color = isEnded ? "#4b5563" : "#14b8a6",
+      logo = getL(item.name),
+      logoHtml = logo
+        ? '<image class="dyn-logo" href="https://cryptologos.cc/logos/' +
+          logo +
+          '?v=025" x="' +
+          (pt.x - 9) +
+          '" y="' +
+          (pt.y - 39) +
+          '" width="18" height="18" opacity="' +
+          (isEnded ? "0.1" : "0.25") +
+          '" />'
+        : "",
+      textY = pt.y - (logo ? 45 : 20),
+      safeName = typeof es === "function" ? es(item.name) : item.name,
+      safeVal = typeof es === "function" ? es(item.val) : item.val;
+    nodesHtml +=
+      '<circle cx="' +
+      pt.x +
+      '" cy="' +
+      pt.y +
+      '" r="12" fill="' +
+      color +
+      '" opacity="0.05"><animate attributeName="r" values="8;18;8" dur="' +
+      dur +
+      's" repeatCount="indefinite"/></circle><circle cx="' +
+      pt.x +
+      '" cy="' +
+      pt.y +
+      '" r="3" fill="#0B0F19" stroke="' +
+      color +
+      '" stroke-width="1.5" opacity="0.5"/>' +
+      logoHtml +
+      '<text x="' +
+      pt.x +
+      '" y="' +
+      textY +
+      '" fill="#6B7280" font-size="10px" font-family="monospace" text-anchor="middle" opacity="0.4">' +
+      safeName +
+      '</text><text x="' +
+      pt.x +
+      '" y="' +
+      (pt.y - 6) +
+      '" fill="' +
+      color +
+      '" font-size="10px" font-weight="bold" text-anchor="middle" opacity="0.5">' +
+      (isEnded ? "(Beendet)" : safeVal) +
+      '</text>';
+  });
+
+  var svgPath =
+      "M 0 400 C 100 350, 200 280, 300 350 C 400 420, 500 500, 600 450 C 700 400, 800 250, 900 300 C 1000 350, 1100 450, 1200 400 C 1300 350, 1400 450, 1500 400",
+    segment =
+      '<g><path d="' +
+      svgPath +
+      ' L 1500 800 L 0 800 Z" fill="url(#areaGradient)" /><path d="' +
+      svgPath +
+      '" fill="none" stroke="#14b8a6" stroke-width="1.5" opacity="0.08" stroke-linecap="round" stroke-linejoin="round" />' +
+      nodesHtml +
+      "</g>",
+    bgHtml =
+      '<div id="dynamic-bg" data-real="' +
+      (isReal ? "true" : "false") +
+      '"><div class="dyn-grid"></div><svg width="200%" height="100%" viewBox="0 0 3000 800" preserveAspectRatio="none" style="filter:drop-shadow(0 0 10px rgba(20,184,166,0.08));position:absolute;bottom:0;left:0"><defs><linearGradient id="areaGradient" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#14b8a6" stop-opacity="0.03" /><stop offset="100%" stop-color="#0B0F19" stop-opacity="0" /></linearGradient></defs><g style="animation:dynPanChart 180s linear infinite;will-change:transform">' +
+      segment +
+      '<g transform="translate(1500, 0)">' +
+      segment +
+      '</g></g></svg></div>';
+
+  document.body.insertAdjacentHTML("afterbegin", bgHtml);
+}
+
 // Render HTML structure
 function R(options) {
   options = options || {};
   var renderScope = options.scope || "all";
   normUi();
   saveUi();
+  renderGlobalBackground();
   let nw = new Date().toISOString(),
     av = S.filter((s) => !s.endedAt),
     pa = S.filter((s) => s.endedAt),
@@ -4249,7 +4424,7 @@ function R(options) {
       h +=
         '<div class="sh"><h2 class="st">Aktive Strategien</h2><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input id="src-act" type="text" placeholder="Suche..." value="' +
         es(SEARCH_ACT) +
-        '" oninput="SEARCH_ACT=this.value;PG_ACT=1;R()" style="width:140px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t);font-size:13px"><div class="srt-hnt">Sortierung im Tabellenkopf</div><div class="vtg"><button class="' +
+        '" oninput="SEARCH_ACT=this.value;PG_ACT=1;R()" style="width:140px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t);font-size:13px"><div class="vtg"><button class="' +
         (VW === "grid" ? "a" : "") +
         '" onclick="VW=\'grid\';R()">▦</button><button class="' +
         (VW === "list" ? "a" : "") +
@@ -4322,7 +4497,7 @@ function R(options) {
       h +=
         '<div class="sh"><div></div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input id="src-past" type="text" placeholder="Suche..." value="' +
         es(SEARCH_PAST) +
-        '" oninput="SEARCH_PAST=this.value;PG_PAST=1;R()" style="width:140px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t);font-size:13px"><div class="srt-hnt">Sortierung im Tabellenkopf</div><div class="vtg"><button class="' +
+        '" oninput="SEARCH_PAST=this.value;PG_PAST=1;R()" style="width:140px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t);font-size:13px"><div class="vtg"><button class="' +
         (VW === "grid" ? "a" : "") +
         '" onclick="VW=\'grid\';R()">▦</button><button class="' +
         (VW === "list" ? "a" : "") +
@@ -4908,7 +5083,7 @@ function R(options) {
         closedPos.length +
         ')</button></div></div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input id="src-frf" type="text" placeholder="Suche..." value="' +
         es(SEARCH_FRF) +
-        '" oninput="SEARCH_FRF=this.value;PG_FRFO=1;PG_FRFC=1;R()" style="width:140px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t);font-size:13px"><div class="srt-hnt">Sortierung im Tabellenkopf</div><button class="bt bo" onclick="M.fpos=1;R()"><span style="font-size:17px">+</span> Position</button></div></div>';
+        '" oninput="SEARCH_FRF=this.value;PG_FRFO=1;PG_FRFC=1;R()" style="width:140px;padding:6px 12px;border-radius:6px;border:1px solid var(--bd2);background:var(--bg2);color:var(--t);font-size:13px"><button class="bt bo" onclick="M.fpos=1;R()"><span style="font-size:17px">+</span> Position</button></div></div>';
       var shownPos = sortFrf(window.FRFV === "open" ? openPos : closedPos);
       if (SEARCH_FRF)
         shownPos = shownPos.filter((p) =>
