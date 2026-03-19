@@ -132,6 +132,77 @@ var LOOP_ORACLE_TOKEN_MAP = {
 };
 var LOOP_ORACLE_REQ = 0;
 
+// ─── Field Validation Helpers ───────────────────────────────────────────────
+
+/**
+ * Marks a field as invalid: red border + message below it.
+ * id     - the element's id attribute
+ * msg    - the error text to display (falsy = no message, just red border)
+ * Returns false so callers can do: return showFieldError('f-n', 'Pflichtfeld');
+ */
+function showFieldError(id, msg) {
+  var el = document.getElementById(id);
+  if (!el) return false;
+  var fg = el.closest('.fg');
+  if (fg) {
+    fg.classList.add('fg--error');
+    var existing = fg.querySelector('.fg-err');
+    if (existing) existing.remove();
+    if (msg) {
+      var span = document.createElement('span');
+      span.className = 'fg-err';
+      span.textContent = msg;
+      fg.appendChild(span);
+    }
+    // Auto-clear when user types/changes
+    var clearFn = function() {
+      fg.classList.remove('fg--error');
+      var err = fg.querySelector('.fg-err');
+      if (err) err.remove();
+      el.removeEventListener('input', clearFn);
+      el.removeEventListener('change', clearFn);
+    };
+    el.addEventListener('input', clearFn);
+    el.addEventListener('change', clearFn);
+  }
+  return false;
+}
+
+/**
+ * Clears error state from one or more field ids.
+ * ids - array of id strings, or a single id string
+ */
+function clearFieldErrors(ids) {
+  var list = Array.isArray(ids) ? ids : [ids];
+  list.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var fg = el.closest('.fg');
+    if (!fg) return;
+    fg.classList.remove('fg--error');
+    var err = fg.querySelector('.fg-err');
+    if (err) err.remove();
+  });
+}
+
+/**
+ * Validate a set of fields at once.
+ * rules - array of { id, test: fn(value) => bool, msg }
+ * Returns true if all valid, false if any failed (shows all errors at once).
+ */
+function validateFields(rules) {
+  var ok = true;
+  rules.forEach(function(rule) {
+    var el = document.getElementById(rule.id);
+    var value = el ? el.value : '';
+    if (!rule.test(value)) {
+      showFieldError(rule.id, rule.msg || 'Pflichtfeld');
+      ok = false;
+    }
+  });
+  return ok;
+}
+
 function setPgAct(p) {
   PG_ACT = p;
   R();
@@ -1247,7 +1318,10 @@ function hReg() {
   let e = document.getElementById("r-email").value,
     p1 = document.getElementById("r-p1").value,
     p2 = document.getElementById("r-p2").value;
-  if (p1 !== p2) return alert("Passwörter stimmen nicht überein!");
+  if (p1 !== p2) {
+    showFieldError('r-p2', 'Passwörter stimmen nicht überein');
+    return;
+  }
   api("/api/auth/register", {
     method: "POST",
     body: JSON.stringify({ email: e, password: p1 }),
@@ -1338,7 +1412,9 @@ function rBack() {
 
 function hNewProf() {
   let n = document.getElementById("p-name").value;
-  if (!n) return;
+  if (!validateFields([
+    { id: 'p-name', test: function(v){ return v.trim().length > 0; }, msg: 'Profilname erforderlich' }
+  ])) return;
   api("/api/profiles", {
     method: "POST",
     body: JSON.stringify({ name: n }),
@@ -1431,7 +1507,10 @@ function loadFeatures() {
 function hSupport() {
   let t = document.getElementById("s-title").value,
     m = document.getElementById("s-msg").value;
-  if (!t || !m) return alert("Bitte Titel und Nachricht ausfüllen.");
+  if (!validateFields([
+    { id: 's-title', test: function(v){ return v.trim().length > 0; }, msg: 'Titel erforderlich' },
+    { id: 's-msg', test: function(v){ return v.trim().length > 0; }, msg: 'Nachricht erforderlich' }
+  ])) return;
   let btn = document.getElementById("s-btn");
   btn.disabled = true;
   btn.innerText = "Sende...";
@@ -1628,7 +1707,18 @@ function calcLoopData() {
 }
 function hLoopCr() {
   var payload = loopPayloadFromForm();
-  if (!payload) return alert("Bitte alle Pflichtfelder ausfüllen.");
+  if (!payload) {
+    var loopErrors = [
+      { id: 'f-lct', test: function(v){ return v.trim().length > 0; }, msg: 'Supply Token erforderlich' },
+      { id: 'f-lbt', test: function(v){ return v.trim().length > 0; }, msg: 'Borrow Token erforderlich' },
+      { id: 'f-lcb', test: function(v){ return !isNaN(parseFloat(v)) && parseFloat(v) > 0; }, msg: 'Start Invest erforderlich' },
+      { id: 'f-lcsm', test: function(v){ return !isNaN(parseFloat(v)) && parseFloat(v) > 0; }, msg: 'Start Tokenmenge erforderlich' },
+      { id: 'f-lsa', test: function(v){ return !isNaN(parseFloat(v)); }, msg: 'Supply APR erforderlich' },
+      { id: 'f-lba', test: function(v){ return !isNaN(parseFloat(v)); }, msg: 'Borrow APR erforderlich' }
+    ];
+    validateFields(loopErrors);
+    return;
+  }
   cm();
   api("/api/loops", { method: "POST", body: JSON.stringify(payload) })
     .then(function (r) {
@@ -1682,7 +1772,18 @@ function hLoopUpd() {
   if (!M.led || !M.led.id) return;
   var id = M.led.id;
   var payload = loopPayloadFromForm();
-  if (!payload) return alert("Bitte alle Pflichtfelder ausfüllen.");
+  if (!payload) {
+    var loopErrors = [
+      { id: 'f-lct', test: function(v){ return v.trim().length > 0; }, msg: 'Supply Token erforderlich' },
+      { id: 'f-lbt', test: function(v){ return v.trim().length > 0; }, msg: 'Borrow Token erforderlich' },
+      { id: 'f-lcb', test: function(v){ return !isNaN(parseFloat(v)) && parseFloat(v) > 0; }, msg: 'Start Invest erforderlich' },
+      { id: 'f-lcsm', test: function(v){ return !isNaN(parseFloat(v)) && parseFloat(v) > 0; }, msg: 'Start Tokenmenge erforderlich' },
+      { id: 'f-lsa', test: function(v){ return !isNaN(parseFloat(v)); }, msg: 'Supply APR erforderlich' },
+      { id: 'f-lba', test: function(v){ return !isNaN(parseFloat(v)); }, msg: 'Borrow APR erforderlich' }
+    ];
+    validateFields(loopErrors);
+    return;
+  }
   cm();
   api("/api/loops/" + id, {
     method: "PUT",
@@ -1756,7 +1857,10 @@ function renderLoopModal(le, isEdit) {
 function hFeature() {
   let t = document.getElementById("f-title").value,
     m = document.getElementById("f-desc").value;
-  if (!t || !m) return alert("Bitte Titel und Beschreibung ausfüllen.");
+  if (!validateFields([
+    { id: 'f-title', test: function(v){ return v.trim().length > 0; }, msg: 'Titel erforderlich' },
+    { id: 'f-desc', test: function(v){ return v.trim().length > 0; }, msg: 'Beschreibung erforderlich' }
+  ])) return;
   api("/api/features", {
     method: "POST",
     body: JSON.stringify({ title: t, description: m }),
@@ -2382,7 +2486,11 @@ function hCr() {
     d = document.getElementById("f-d").value,
     t = document.getElementById("f-t").value || "00:00",
     i = parseFloat(document.getElementById("f-i").value);
-  if (!n || !d || !i) return;
+  if (!validateFields([
+    { id: 'f-n', test: function(v){ return v.trim().length > 0; }, msg: 'Name ist erforderlich' },
+    { id: 'f-d', test: function(v){ return v.length > 0; }, msg: 'Datum ist erforderlich' },
+    { id: 'f-i', test: function(v){ return !isNaN(parseFloat(v)) && parseFloat(v) > 0; }, msg: 'Investition muss > 0 sein' }
+  ])) return;
   var no = document.getElementById("f-no").value || "",
     tn = document.getElementById("f-tn").value.trim(),
     ta = parseFloat(document.getElementById("f-ta").value) || 0,
@@ -2402,7 +2510,10 @@ function hCr() {
 }
 function hRw() {
   var a = parseFloat(document.getElementById("f-ra").value);
-  if (!a || !SI) return;
+  if (!SI) return;
+  if (!validateFields([
+    { id: 'f-ra', test: function(v){ return !isNaN(parseFloat(v)) && parseFloat(v) !== 0; }, msg: 'Betrag erforderlich' }
+  ])) return;
   var d = document.getElementById("f-rd").value,
     t = document.getElementById("f-rt").value,
     nt = document.getElementById("f-rn").value || "";
@@ -2415,7 +2526,10 @@ function hRw() {
 }
 function hIv() {
   var a = parseFloat(document.getElementById("f-ni").value);
-  if ((!a && a !== 0) || !SI) return;
+  if (!SI) return;
+  if (!validateFields([
+    { id: 'f-ni', test: function(v){ return v !== '' && !isNaN(parseFloat(v)); }, msg: 'Betrag erforderlich' }
+  ])) return;
   cm();
   F("/api/strategies/" + SI + "/investment", {
     method: "POST",
@@ -2427,7 +2541,10 @@ function hIv() {
 }
 function hPl() {
   var a = parseFloat(document.getElementById("f-pa").value);
-  if (isNaN(a) || !SI) return;
+  if (!SI) return;
+  if (!validateFields([
+    { id: 'f-pa', test: function(v){ return v !== '' && !isNaN(parseFloat(v)); }, msg: 'Betrag erforderlich' }
+  ])) return;
   cm();
   F("/api/strategies/" + SI + "/pnl", {
     method: "POST",
@@ -2462,7 +2579,9 @@ function hTk() {
 function hEd() {
   if (!SI) return;
   var d = document.getElementById("f-edd").value;
-  if (!d) return;
+  if (!validateFields([
+    { id: 'f-edd', test: function(v){ return v.length > 0; }, msg: 'Datum erforderlich' }
+  ])) return;
   cm();
   F("/api/strategies/" + SI + "/enddate", {
     method: "PUT",
@@ -2528,7 +2647,9 @@ function hEi() {
 function hFex() {
   var n = document.getElementById("f-exn").value.trim(),
     m = parseFloat(document.getElementById("f-exm").value) || 0;
-  if (!n) return;
+  if (!validateFields([
+    { id: 'f-exn', test: function(v){ return v.trim().length > 0; }, msg: 'Name ist erforderlich' }
+  ])) return;
   cm();
   F("/api/frf/exchanges", {
     method: "POST",
@@ -2549,7 +2670,9 @@ function hFeex() {
 function hFexm() {
   var o = M.fexm;
   var a = parseFloat(document.getElementById("f-exma").value);
-  if (isNaN(a)) return;
+  if (!validateFields([
+    { id: 'f-exma', test: function(v){ return v !== '' && !isNaN(parseFloat(v)); }, msg: 'Betrag erforderlich' }
+  ])) return;
   cm();
   F("/api/frf/exchanges/" + o.id + "/margin", {
     method: "POST",
@@ -2597,16 +2720,13 @@ function hFpos() {
       ""
     ).toUpperCase();
   if (!asset) {
-    alert("Bitte Token-Symbol eingeben (z.B. BTC, ETH, SOL).");
-    return;
+    return showFieldError('f-pstk', 'Token-Symbol eingeben (z.B. BTC, ETH)');
   }
   if (!shortChoice.market) {
-    alert("Bitte Short-Token eingeben.");
-    return;
+    return showFieldError('f-pstk', 'Short-Token eingeben');
   }
   if (!(lg === "_spot" ? longChoice.market || asset : longChoice.market)) {
-    alert("Bitte Long-Token eingeben.");
-    return;
+    return showFieldError('f-pltk', 'Long-Token eingeben');
   }
   var sd = document.getElementById("f-psd").value,
     st = document.getElementById("f-pst").value;
@@ -2705,7 +2825,9 @@ function hFepos() {
 function hFfund() {
   var o = M.ffund;
   var a = parseFloat(document.getElementById("f-ffa").value);
-  if (isNaN(a)) return;
+  if (!validateFields([
+    { id: 'f-ffa', test: function(v){ return v !== '' && !isNaN(parseFloat(v)); }, msg: 'Betrag erforderlich' }
+  ])) return;
   cm();
   F("/api/frf/positions/" + o.pid + "/funding/" + o.side, {
     method: "POST",
@@ -3143,7 +3265,10 @@ function hMsgReply() {
   if (!M.msgreply) return;
   var title = document.getElementById("msg-r-title").value.trim(),
     body = document.getElementById("msg-r-body").value.trim();
-  if (!title || !body) return alert("Bitte Betreff und Nachricht ausfüllen.");
+  if (!validateFields([
+    { id: 'msg-r-title', test: function(v){ return v.trim().length > 0; }, msg: 'Betreff erforderlich' },
+    { id: 'msg-r-body', test: function(v){ return v.trim().length > 0; }, msg: 'Nachricht erforderlich' }
+  ])) return;
   api("/api/messages", {
     method: "POST",
     body: JSON.stringify({

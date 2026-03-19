@@ -93,3 +93,18 @@
   cursor: pointer;
   font-size: 16px;
 }
+
+/* Field-level validation errors */
+.fg--error input,
+.fg--error textarea,
+.fg--error select {
+  border-color: var(--r) !important;
+  background: var(--rb) !important;
+}
+.fg-err {
+  font-size: 11px;
+  color: var(--r);
+  margin-top: 4px;
+  padding: 0 2px;
+  display: block;
+}
