@@ -1,7 +1,7 @@
 function registerOracleRoutes(app, deps) {
-  const { benqiProvider, normalizeLoopTokenInput, oracle, requireAuth } = deps;
+  const { benqiProvider, externalApiLimiter, normalizeLoopTokenInput, oracle, requireAuth } = deps;
 
-  app.get('/api/oracle/lookup', requireAuth, async (req, res) => {
+  app.get('/api/oracle/lookup', requireAuth, externalApiLimiter, async (req, res) => {
     try {
       const asset = String(req.query.asset || '').trim().slice(0, 32);
       const protocol = String(req.query.protocol || '').trim().slice(0, 40);
@@ -17,7 +17,7 @@ function registerOracleRoutes(app, deps) {
     }
   });
 
-  app.get('/api/loops/peg-quote', requireAuth, async (req, res) => {
+  app.get('/api/loops/peg-quote', requireAuth, externalApiLimiter, async (req, res) => {
     try {
       const asset = normalizeLoopTokenInput(req.query.asset);
       const referenceAsset = normalizeLoopTokenInput(req.query.referenceAsset);

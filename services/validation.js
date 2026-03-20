@@ -64,8 +64,15 @@ function normalizeLoopTokenInput(value) {
   return String(value || '').trim().toUpperCase().slice(0, 50);
 }
 
+const VALID_ROLES = ['user', 'support', 'admin', 'owner'];
+
 function normalizeRole(role) {
-  return ROLE_ORDER.includes(role) ? role : 'user';
+  return VALID_ROLES.includes(role) ? role : 'user';
+}
+
+function validateRole(role) {
+  const normalized = String(role || '').trim().toLowerCase();
+  return VALID_ROLES.includes(normalized) ? normalized : null;
 }
 
 function hasRole(account, minRole) {
@@ -121,6 +128,7 @@ function normalizeMessagePayload(body) {
 module.exports = {
   MESSAGE_SEGMENTS,
   ROLE_ORDER,
+  VALID_ROLES,
   escHtml,
   hasRole,
   isPlainObject,
@@ -131,4 +139,5 @@ module.exports = {
   normalizeMessagePayload,
   normalizeRole,
   sanitizeMessageLinkUrl,
+  validateRole,
 };

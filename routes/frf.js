@@ -1,12 +1,12 @@
 function registerFrfRoutes(app, deps) {
-  const { attachProfile, express, getExchangeFunding, getExchangeQuote, getFrfSpotFallback, gid, profileExchangeById, requireAuth, saveProfile, searchSymbolsForExchange, svU } = deps;
+  const { attachProfile, express, externalApiLimiter, getExchangeFunding, getExchangeQuote, getFrfSpotFallback, gid, profileExchangeById, requireAuth, saveProfile, searchSymbolsForExchange, svU } = deps;
 
   app.get('/api/frf', requireAuth, attachProfile, (req, res) => { res.json(req.profile.frf); });
 
   const router = express.Router();
   app.use('/api', requireAuth, attachProfile, router);
 
-  router.get('/frf/exchanges/:id/symbols', async (req, res) => {
+  router.get('/frf/exchanges/:id/symbols', externalApiLimiter, async (req, res) => {
     try {
       const exchangeId = String(req.params.id || '').trim().slice(0, 100);
       const query = String(req.query.q || '').trim().slice(0, 30);
@@ -21,7 +21,7 @@ function registerFrfRoutes(app, deps) {
     }
   });
 
-  router.get('/frf/positions/:id/live', async (req, res) => {
+  router.get('/frf/positions/:id/live', externalApiLimiter, async (req, res) => {
     try {
       const positionId = String(req.params.id || '').trim().slice(0, 100);
       if (!positionId) return res.status(400).json({ error: 'Position erforderlich' });

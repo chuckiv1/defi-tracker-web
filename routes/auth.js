@@ -4,6 +4,7 @@ function registerAuthRoutes(app, deps) {
     SESSION_COOKIE,
     SESSION_COOKIE_OPTS,
     VERIFY_RESEND_LIMIT_MS,
+    checkAndReportLoginAttempt,
     crypto,
     db,
     gid,
@@ -11,6 +12,8 @@ function registerAuthRoutes(app, deps) {
     jwt,
     jwtSecret,
     normalizeRole,
+    onFailedLogin,
+    resetLoginAttempt,
     sendMail,
     timingSafeCompare,
     touchPresence,
@@ -34,16 +37,22 @@ function registerAuthRoutes(app, deps) {
       if (!email || !email.includes('@') || !password || password.length < 8) return res.status(400).json({ error: 'Ungültige Daten' });
 
       const { rows: existing } = await db.query('SELECT id FROM accounts WHERE LOWER(email) = LOWER($1)', [email]);
-      if (existing.length > 0) return res.status(400).json({ error: 'E-Mail existiert bereits' });
+      if (existing.length > 0) return res.status(400).json({ error: 'Ungültige Anmeldedaten' });
 
       const salt = crypto.randomBytes(16).toString('hex');
       const verifyToken = gid();
+      const tokenHash = crypto.createHash('sha256').update(verifyToken).digest('hex');
       const accId = gid();
       const passHash = await hashPassAsync(password, salt);
 
       await db.query(
-        'INSERT INTO accounts (id, email, salt, passHash, role, isVerified, verifyToken, isBlocked) VALUES ($1, $2, $3, $4, $5, false, $6, false)',
-        [accId, email, salt, passHash, 'user', verifyToken],
+        'INSERT INTO accounts (id, email, salt, passHash, role, isVerified, isBlocked) VALUES ($1, $2, $3, $4, $5, false, false)',
+        [accId, email, salt, passHash, 'user'],
+      );
+
+      await db.query(
+        'INSERT INTO email_verification_logs (id, accountId, tokenHash, expiresAt) VALUES ($1, $2, $3, CURRENT_TIMESTAMP + INTERVAL \'1 day\')',
+        [gid(), accId, tokenHash],
       );
 
       const link = `${APP_URL}/verify.html?token=${verifyToken}`;
@@ -51,7 +60,7 @@ function registerAuthRoutes(app, deps) {
       res.json({ ok: 1 });
     } catch (error) {
       console.error('register error:', error.message);
-      if (error.code === '23505') return res.status(400).json({ error: 'E-Mail existiert bereits' });
+      if (error.code === '23505') return res.status(400).json({ error: 'Ungültige Anmeldedaten' });
       res.status(500).json({ error: 'Registrierung fehlgeschlagen' });
     }
   });
@@ -60,12 +69,19 @@ function registerAuthRoutes(app, deps) {
     try {
       const { token } = req.body;
       if (!token) return res.status(400).json({ error: 'Token fehlt' });
-      const { rows } = await db.query('SELECT * FROM accounts WHERE verifyToken = $1', [token]);
+
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+      const { rows } = await db.query(
+        'SELECT vl.*, a.id as accId FROM email_verification_logs vl JOIN accounts a ON a.id = vl.accountId WHERE vl.tokenHash = $1 AND vl.expiresAt > CURRENT_TIMESTAMP AND vl.usedAt IS NULL',
+        [tokenHash]
+      );
       if (rows.length === 0) return res.status(400).json({ error: 'Ungültiger oder abgelaufener Link' });
 
-      const acc = rows[0];
-      await db.query('UPDATE accounts SET isVerified = true, verifyToken = NULL WHERE id = $1', [acc.id]);
-      await db.query('INSERT INTO profiles (id, accountid, name) VALUES ($1, $2, $3)', [gid(), acc.id, 'Main Wallet']);
+      const logEntry = rows[0];
+      await db.query('UPDATE email_verification_logs SET usedAt = CURRENT_TIMESTAMP WHERE id = $1', [logEntry.id]);
+      await db.query('UPDATE accounts SET isVerified = true WHERE id = $1', [logEntry.accId]);
+      await db.query('DELETE FROM email_verification_logs WHERE accountId = $1 AND usedAt IS NULL AND id <> $2', [logEntry.accId, logEntry.id]);
+      await db.query('INSERT INTO profiles (id, accountid, name) VALUES ($1, $2, $3)', [gid(), logEntry.accId, 'Main Wallet']);
       res.json({ ok: 1 });
     } catch (error) {
       console.error('verify error:', error.message);
@@ -87,10 +103,22 @@ function registerAuthRoutes(app, deps) {
       if (rows.length === 0) return res.status(400).json({ error: 'Anfrage konnte nicht verarbeitet werden' });
 
       const acc = rows[0];
-      if (acc.isverified) return res.status(400).json({ error: 'E-Mail ist bereits verifiziert' });
+      if (acc.isverified) {
+        // Silently return success to prevent email enumeration
+        verifyResendCooldowns.set(email, now);
+        return res.json({ ok: 1, retryAfterMs: VERIFY_RESEND_LIMIT_MS });
+      }
 
-      const verifyToken = acc.verifytoken || gid();
-      if (!acc.verifytoken) await db.query('UPDATE accounts SET verifyToken = $1 WHERE id = $2', [verifyToken, acc.id]);
+      // Invalidate all existing unused tokens for this account
+      await db.query('UPDATE email_verification_logs SET usedAt = CURRENT_TIMESTAMP WHERE accountId = $1 AND usedAt IS NULL', [acc.id]);
+
+      // Create new verification token
+      const verifyToken = gid();
+      const tokenHash = crypto.createHash('sha256').update(verifyToken).digest('hex');
+      await db.query(
+        'INSERT INTO email_verification_logs (id, accountId, tokenHash, expiresAt) VALUES ($1, $2, $3, CURRENT_TIMESTAMP + INTERVAL \'1 day\')',
+        [gid(), acc.id, tokenHash]
+      );
 
       const link = `${APP_URL}/verify.html?token=${verifyToken}`;
       await sendMail(acc.email, 'DeFi Vault - Bitte verifiziere deine E-Mail', `Klicke hier, um deinen Account freizuschalten: <a href="${link}">${link}</a>`);
@@ -110,10 +138,23 @@ function registerAuthRoutes(app, deps) {
       if (rows.length === 0) return res.status(401).json({ error: 'Falsche E-Mail oder Passwort' });
 
       const acc = rows[0];
+      
+      // Account-based rate limiting
+      const rateCheck = checkAndReportLoginAttempt(acc.id, req.ip);
+      if (!rateCheck.allowed) {
+        return res.status(429).json({ error: 'Zu viele Login-Versuche. Bitte warte kurz.', retryAfterMs: rateCheck.retryAfterMs });
+      }
+      
       const computedHash = await hashPassAsync(password, acc.salt);
-      if (!timingSafeCompare(acc.passhash, computedHash)) return res.status(401).json({ error: 'Falsche E-Mail oder Passwort' });
+      if (!timingSafeCompare(acc.passhash, computedHash)) {
+        onFailedLogin(acc.id, req.ip);
+        return res.status(401).json({ error: 'Falsche E-Mail oder Passwort' });
+      }
       if (acc.isblocked) return res.status(403).json({ error: 'Account ist blockiert' });
       if (!acc.isverified) return res.status(403).json({ error: 'E-Mail noch nicht verifiziert' });
+
+      // Reset login attempts on successful login
+      resetLoginAttempt(acc.id);
 
       const today = new Date().toISOString().split('T')[0];
       await db.query(
