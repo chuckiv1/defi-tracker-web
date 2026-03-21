@@ -2026,7 +2026,7 @@ function renderLoopModal(le, isEdit) {
   var pegPreview =
     renderPegSummary(loopPegInfo(vCt, vPegRef, vPegEntry)) ||
     '<div class="hnt">Peg-Vergleich optional: Referenz-Token und Einstiegspreis setzen, um Markt-/Depeg-Deltas live zu sehen.</div>';
-  return `<div class="ov" onclick="cm();R()"><div class="mdl" style="max-width:620px" onclick="event.stopPropagation()"><div class="mdt">${isEdit ? "Loop bearbeiten" : "Neuen Loop erstellen"}</div><div style="background:var(--bg3);padding:12px;border-radius:8px;margin-bottom:16px;border:1px solid var(--bd)"><div style="font-size:11px;color:var(--t4);margin-bottom:6px">LOOP NAME (automatisch)</div><div style="font-size:16px;font-weight:600;color:var(--g)" id="f-ln-auto">${vCt && vBt ? es(vCt) + " / " + es(vBt) : "Supply Token / Borrow Token"}</div></div>${loopTokenDatalist()}<div class="fr"><div class="fg"><label>Start Datum (leer = jetzt)</label><input id="f-ld" type="date" value="${sd ? fds(sd) : ""}"></div><div class="fg"><label>Start Uhrzeit</label><input id="f-lt" type="time" value="${sd ? fts(sd) : ""}"></div></div><div class="fg"><label>Start Invest in USDC</label><input id="f-lcb" type="number" step="any" placeholder="1000" value="${vCb}" oninput="calcLoopData()"><div class="hnt">Hier gibst du das Kapital ein, mit dem du den Loop aufsetzt.</div></div><div style="background:var(--yb);border:1px solid var(--y);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--y);font-weight:600;margin-bottom:10px">📥 SUPPLY</div><div class="fr"><div class="fg"><label>Supply Token</label><input id="f-lct" list="loop-token-options" placeholder="ETH" value="${es(vCt)}" oninput="updateLoopName();calcLoopData()" onchange="fetchLoopOracleDefaults('supply')"></div><div class="fg"><label id="f-lsa-lbl">${es(loopRateLabel("supply", vCt))}</label><input id="f-lsa" type="number" step="0.01" placeholder="8.5" value="${vSa}" oninput="calcLoopData()"></div></div><div class="fr" style="margin-top:10px"><div class="fg"><label>Start Tokenmenge</label><input id="f-lcsm" type="number" step="any" placeholder="0.42" value="${vCsm}" oninput="calcLoopData()"></div><div class="fg"><label>Tokenpreis beim Kauf</label><input id="f-lcp" type="number" step="any" value="${vCp}" oninput="calcLoopData()"></div></div></div><div style="background:var(--rb);border:1px solid var(--r);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--r);font-weight:600;margin-bottom:10px">📤 BORROW</div><div class="fr"><div class="fg"><label>Borrow Token</label><input id="f-lbt" list="loop-token-options" placeholder="USDC" value="${es(vBt)}" oninput="updateLoopName();calcLoopData()" onchange="fetchLoopOracleDefaults('borrow')"></div><div class="fg"><label id="f-lba-lbl">${es(loopRateLabel("borrow", vBt))}</label><input id="f-lba" type="number" step="0.01" placeholder="3.5" value="${vBa}" oninput="calcLoopData()"></div></div><div class="fr" style="margin-top:10px"><div class="fg"><label>Aktuelle Collateral-Menge</label><input id="f-lce" type="number" step="any" placeholder="optional" value="${vCe}" oninput="calcLoopData()"></div><div class="fg"><label>Aktuelle Borrow-Menge</label><input id="f-lbe" type="number" step="any" placeholder="optional" value="${vBe}" oninput="calcLoopData()"></div></div></div><div style="background:var(--pb);border:1px solid var(--p);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--p);font-weight:600;margin-bottom:10px">PEG / DEPEG</div><div class="fr"><div class="fg"><label>Peg Referenz-Token</label><input id="f-lpr" list="loop-token-options" placeholder="AVAX" value="${es(vPegRef)}" oninput="calcLoopData()"></div><div class="fg"><label>Depeg Einstieg (1 ${es(vCt || "Asset")} = x Referenz)</label><input id="f-lpe" type="number" step="any" placeholder="1.25" value="${vPegEntry}" oninput="calcLoopData()"></div></div><div id="f-lpeg-preview">${pegPreview}</div></div><div class="fg"><label>Notiz</label><textarea id="f-lno" rows="3" placeholder="Warum wurde der Loop eröffnet? Worauf achtest du?">${es(vNotes)}</textarea></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="${isEdit ? "hLoopUpd()" : "hLoopCr()"}">${isEdit ? "Speichern" : "Erstellen"}</button></div></div></div>`;
+  return `<div class="ov" onclick="cm();R()"><div class="mdl" style="max-width:620px" onclick="event.stopPropagation()"><div class="mdt">${isEdit ? "Loop bearbeiten" : "Neuen Loop erstellen"}</div><div style="background:var(--bg3);padding:12px;border-radius:8px;margin-bottom:16px;border:1px solid var(--bd)"><div style="font-size:11px;color:var(--t4);margin-bottom:6px">LOOP NAME (automatisch)</div><div style="font-size:16px;font-weight:600;color:var(--g)" id="f-ln-auto">${vCt && vBt ? es(vCt) + " / " + es(vBt) : "Supply Token / Borrow Token"}</div></div>${loopTokenDatalist()}<div class="fr"><div class="fg"><label>Start Datum (leer = jetzt)</label><input id="f-ld" type="date" value="${sd ? fds(sd) : ""}"></div><div class="fg"><label>Start Uhrzeit</label><input id="f-lt" type="time" value="${sd ? fts(sd) : ""}"></div></div><div class="fg"><label>Start Invest in USDC</label><input id="f-lcb" type="number" step="any" placeholder="1000" value="${vCb}" oninput="calcLoopData()"><div class="hnt">Hier gibst du das Kapital ein, mit dem du den Loop aufsetzt.</div></div><div style="background:var(--g-bg);border:1px solid rgba(0,255,163,0.22);border-radius:12px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--g);font-weight:600;margin-bottom:10px">📥 SUPPLY</div><div class="fr"><div class="fg"><label>Supply Token</label><input id="f-lct" list="loop-token-options" placeholder="ETH" value="${es(vCt)}" oninput="updateLoopName();calcLoopData()" onchange="fetchLoopOracleDefaults('supply')"></div><div class="fg"><label id="f-lsa-lbl">${es(loopRateLabel("supply", vCt))}</label><input id="f-lsa" type="number" step="0.01" placeholder="8.5" value="${vSa}" oninput="calcLoopData()"></div></div><div class="fr" style="margin-top:10px"><div class="fg"><label>Start Tokenmenge</label><input id="f-lcsm" type="number" step="any" placeholder="0.42" value="${vCsm}" oninput="calcLoopData()"></div><div class="fg"><label>Tokenpreis beim Kauf</label><input id="f-lcp" type="number" step="any" value="${vCp}" oninput="calcLoopData()"></div></div></div><div style="background:var(--rb);border:1px solid var(--r);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--r);font-weight:600;margin-bottom:10px">📤 BORROW</div><div class="fr"><div class="fg"><label>Borrow Token</label><input id="f-lbt" list="loop-token-options" placeholder="USDC" value="${es(vBt)}" oninput="updateLoopName();calcLoopData()" onchange="fetchLoopOracleDefaults('borrow')"></div><div class="fg"><label id="f-lba-lbl">${es(loopRateLabel("borrow", vBt))}</label><input id="f-lba" type="number" step="0.01" placeholder="3.5" value="${vBa}" oninput="calcLoopData()"></div></div><div class="fr" style="margin-top:10px"><div class="fg"><label>Aktuelle Collateral-Menge</label><input id="f-lce" type="number" step="any" placeholder="optional" value="${vCe}" oninput="calcLoopData()"></div><div class="fg"><label>Aktuelle Borrow-Menge</label><input id="f-lbe" type="number" step="any" placeholder="optional" value="${vBe}" oninput="calcLoopData()"></div></div></div><div style="background:var(--pb);border:1px solid var(--p);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--p);font-weight:600;margin-bottom:10px">PEG / DEPEG</div><div class="fr"><div class="fg"><label>Peg Referenz-Token</label><input id="f-lpr" list="loop-token-options" placeholder="AVAX" value="${es(vPegRef)}" oninput="calcLoopData()"></div><div class="fg"><label>Depeg Einstieg (1 ${es(vCt || "Asset")} = x Referenz)</label><input id="f-lpe" type="number" step="any" placeholder="1.25" value="${vPegEntry}" oninput="calcLoopData()"></div></div><div id="f-lpeg-preview">${pegPreview}</div></div><div class="fg"><label>Notiz</label><textarea id="f-lno" rows="3" placeholder="Warum wurde der Loop eröffnet? Worauf achtest du?">${es(vNotes)}</textarea></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="${isEdit ? "hLoopUpd()" : "hLoopCr()"}">${isEdit ? "Speichern" : "Erstellen"}</button></div></div></div>`;
 }
 function hFeature() {
   let t = document.getElementById("f-title").value,
@@ -2098,7 +2098,7 @@ function renderAdminChart() {
   }
 
   if (maxC === 0) {
-    ctx.fillStyle = "#8a8f98";
+    ctx.fillStyle = "#a0a0a0";
     ctx.font = '12px "Inter", sans-serif';
     ctx.textAlign = "center";
     ctx.fillText("Keine Aktivität in diesem Zeitraum", w / 2, h / 2);
@@ -2118,7 +2118,7 @@ function renderAdminChart() {
     var by = h - bottomPadding - bh;
 
     // Bar
-    ctx.fillStyle = c > 0 ? "#00e5a0" : "#2a2f3a";
+    ctx.fillStyle = c > 0 ? "#00ffa3" : "rgba(255,255,255,0.12)";
     if (c === 0) {
       ctx.fillRect(bx, h - bottomPadding - 4, barW, 4);
     } else {
@@ -2127,7 +2127,7 @@ function renderAdminChart() {
 
     // Count text inside/above bar
     if (c > 0 && barW > 14) {
-      ctx.fillStyle = bh > 20 ? "#0d0f14" : "#00e5a0";
+      ctx.fillStyle = bh > 20 ? "#050505" : "#00ffa3";
       ctx.font = '600 10px "JetBrains Mono", monospace';
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
@@ -2137,7 +2137,7 @@ function renderAdminChart() {
 
     // X-Axis Date (only show if enough space or every Nth label)
     if (barW > 24 || idx % Math.ceil(tf / 7) === 0) {
-      ctx.fillStyle = "#6b7280";
+      ctx.fillStyle = "#7a7a7a";
       ctx.font = '10px "Inter", sans-serif';
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
@@ -4017,7 +4017,7 @@ function renderGlobalBackground() {
   if (!existingStyle) {
     document.head.insertAdjacentHTML(
       "beforeend",
-      '<style id="dynamic-bg-style">#app{position:relative;z-index:1;isolation:isolate}#dynamic-bg{position:fixed;top:-20%;left:-10%;width:120%;height:140%;z-index:0;pointer-events:none;transform:rotate(-8deg) scale(1.1);transform-origin:center center;overflow:hidden}#dynamic-bg .dyn-grid{position:absolute;inset:0;opacity:.04;background-image:linear-gradient(to right, rgba(255,255,255,.05) 1px, transparent 1px),linear-gradient(to bottom, rgba(255,255,255,.05) 1px, transparent 1px);background-size:60px 60px;mask-image:radial-gradient(circle at center, black 10%, transparent 80%);-webkit-mask-image:radial-gradient(circle at center, black 10%, transparent 80%)}#dynamic-bg .dyn-logo{mix-blend-mode:screen}@keyframes dynPanChart{0%{transform:translateX(0)}100%{transform:translateX(-1500px)}} </style>',
+      '<style id="dynamic-bg-style">#app{position:relative;z-index:1;isolation:isolate}#dynamic-bg{position:fixed;top:-20%;left:-10%;width:120%;height:140%;z-index:0;pointer-events:none;transform:rotate(-8deg) scale(1.1);transform-origin:center center;overflow:hidden}#dynamic-bg .dyn-grid{position:absolute;inset:0;opacity:.05;background-image:linear-gradient(to right, rgba(255,255,255,.04) 1px, transparent 1px),linear-gradient(to bottom, rgba(255,255,255,.04) 1px, transparent 1px);background-size:60px 60px;mask-image:radial-gradient(circle at center, black 10%, transparent 80%);-webkit-mask-image:radial-gradient(circle at center, black 10%, transparent 80%)}#dynamic-bg .dyn-logo{mix-blend-mode:screen}@keyframes dynPanChart{0%{transform:translateX(0)}100%{transform:translateX(-1500px)}} </style>',
     );
   }
 
@@ -4101,7 +4101,7 @@ function renderGlobalBackground() {
       pt = pathPoints[idx] || pathPoints[0],
       dur = 3 + (i % 4) + Math.random(),
       isEnded = item.status === "Beendet" || item.status === "closed",
-      color = isEnded ? "#4b5563" : "#14b8a6",
+      color = isEnded ? "#5a5a5a" : "#00ffa3",
       logo = getL(item.name),
       logoHtml = logo
         ? '<image class="dyn-logo" href="https://cryptologos.cc/logos/' +
@@ -4130,7 +4130,7 @@ function renderGlobalBackground() {
       pt.x +
       '" cy="' +
       pt.y +
-      '" r="3" fill="#0B0F19" stroke="' +
+      '" r="3" fill="#050505" stroke="' +
       color +
       '" stroke-width="1.5" opacity="0.5"/>' +
       logoHtml +
@@ -4138,7 +4138,7 @@ function renderGlobalBackground() {
       pt.x +
       '" y="' +
       textY +
-      '" fill="#6B7280" font-size="10px" font-family="monospace" text-anchor="middle" opacity="0.4">' +
+      '" fill="#7A7A7A" font-size="10px" font-family="monospace" text-anchor="middle" opacity="0.42">' +
       safeName +
       '</text><text x="' +
       pt.x +
@@ -4158,13 +4158,13 @@ function renderGlobalBackground() {
       svgPath +
       ' L 1500 800 L 0 800 Z" fill="url(#areaGradient)" /><path d="' +
       svgPath +
-      '" fill="none" stroke="#14b8a6" stroke-width="1.5" opacity="0.08" stroke-linecap="round" stroke-linejoin="round" />' +
+      '" fill="none" stroke="#00ffa3" stroke-width="1.5" opacity="0.1" stroke-linecap="round" stroke-linejoin="round" />' +
       nodesHtml +
       "</g>",
     bgHtml =
       '<div id="dynamic-bg" data-real="' +
       (isReal ? "true" : "false") +
-      '"><div class="dyn-grid"></div><svg width="200%" height="100%" viewBox="0 0 3000 800" preserveAspectRatio="none" style="filter:drop-shadow(0 0 10px rgba(20,184,166,0.08));position:absolute;bottom:0;left:0"><defs><linearGradient id="areaGradient" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#14b8a6" stop-opacity="0.03" /><stop offset="100%" stop-color="#0B0F19" stop-opacity="0" /></linearGradient></defs><g style="animation:dynPanChart 180s linear infinite;will-change:transform">' +
+      '"><div class="dyn-grid"></div><svg width="200%" height="100%" viewBox="0 0 3000 800" preserveAspectRatio="none" style="filter:drop-shadow(0 0 12px rgba(0,255,163,0.1));position:absolute;bottom:0;left:0"><defs><linearGradient id="areaGradient" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#00ffa3" stop-opacity="0.05" /><stop offset="100%" stop-color="#050505" stop-opacity="0" /></linearGradient></defs><g style="animation:dynPanChart 180s linear infinite;will-change:transform">' +
       segment +
       '<g transform="translate(1500, 0)">' +
       segment +
@@ -4278,11 +4278,11 @@ function R(options) {
   let h = SECTION_MARKERS.header;
   if (IS_DEMO) {
     h +=
-      '<div style="background:var(--blb);color:var(--bl);padding:10px 16px;text-align:center;font-size:13px;font-weight:600;display:flex;justify-content:center;align-items:center;gap:16px;z-index:100;position:relative;">Du befindest dich im Demo-Modus. Bitte logge dich ein oder erstelle einen Account, um deine eigenen Daten zu verwalten und Fortschritte zu speichern! <button class="bt bp" style="padding:4px 12px;font-size:12px;" onclick="M.login=1;R()">Login / Register</button></div>';
+      '<div style="background:rgba(255,255,255,0.05);color:var(--t);padding:10px 16px;text-align:center;font-size:13px;font-weight:600;display:flex;justify-content:center;align-items:center;gap:16px;z-index:100;position:relative;border:1px solid rgba(255,255,255,0.12);box-shadow:var(--shadow-panel);backdrop-filter:blur(10px);">Du befindest dich im Demo-Modus. Bitte logge dich ein oder erstelle einen Account, um deine eigenen Daten zu verwalten und Fortschritte zu speichern! <button class="bt bp" style="padding:4px 12px;font-size:12px;" onclick="M.login=1;R()">Login / Register</button></div>';
   }
 
   h +=
-    '<header class="hdr"><div class="hl"><div><svg width="26" height="26" viewBox="0 0 28 28"><rect x="2" y="2" width="24" height="24" rx="6" stroke="#00e5a0" stroke-width="2" fill="none"/><path d="M8 18L12 10L16 15L20 8" stroke="#00e5a0" stroke-width="2" stroke-linecap="round"/></svg></div><div><div class="tt">DeFi Vault' +
+    '<header class="hdr"><div class="hl"><div><svg width="26" height="26" viewBox="0 0 28 28"><rect x="2" y="2" width="24" height="24" rx="6" stroke="#00ffa3" stroke-width="2" fill="none"/><path d="M8 18L12 10L16 15L20 8" stroke="#00ffa3" stroke-width="2" stroke-linecap="round"/></svg></div><div><div class="tt">DeFi Vault' +
     (IS_DEMO ? " (DEMO)" : "") +
     '</div><div class="su">Secure Tracker</div></div></div><div class="hr">';
 
@@ -5663,7 +5663,7 @@ function R(options) {
       }
     } else if (V === "looping") {
       h +=
-        '<div style="background:linear-gradient(90deg,var(--y),var(--o));color:#000;padding:12px 20px;border-radius:8px;margin-bottom:20px;font-weight:600;text-align:center;font-size:14px">🚧 Looping noch im Aufbau - BETA - Funktionen können sich ändern 🚧</div>';
+        '<div style="background:rgba(255,255,255,0.05);color:var(--t);padding:12px 20px;border-radius:14px;margin-bottom:20px;font-weight:600;text-align:center;font-size:14px;border:1px solid rgba(255,255,255,0.12);box-shadow:var(--shadow-panel);backdrop-filter:blur(10px)">🚧 Looping noch im Aufbau - BETA - Funktionen können sich ändern 🚧</div>';
       var activeL = LO.filter((l) => l.status === "active" || !l.status);
       var closedL = LO.filter((l) => l.status === "closed");
       var selLoop = LPI
@@ -5850,9 +5850,9 @@ function R(options) {
 
             h +=
               '<div style="display:flex;background:var(--bg2);border:1px solid var(--bd);border-radius:12px;padding:20px;gap:24px;align-items:flex-start"><div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:' +
-              (f.has_voted ? "rgba(59,130,246,0.1)" : "var(--bg3)") +
+              (f.has_voted ? "var(--gb)" : "var(--bg3)") +
               ";padding:12px;border-radius:12px;min-width:64px;border:1px solid " +
-              (f.has_voted ? "rgba(59,130,246,0.2)" : "transparent") +
+              (f.has_voted ? "rgba(0,255,163,0.22)" : "transparent") +
               '"><button style="background:none;border:none;font-size:20px;color:' +
               (f.has_voted ? "var(--bp)" : "var(--t4)") +
               ";" +
@@ -6260,7 +6260,7 @@ function R(options) {
 
   if (false && M.lcr) {
     h +=
-      '<div class="ov" onclick="cm();R()"><div class="mdl" style="max-width:520px" onclick="event.stopPropagation()"><div class="mdt">Neuen Loop erstellen</div><div style="background:var(--bg3);padding:12px;border-radius:8px;margin-bottom:16px;border:1px solid var(--bd)"><div style="font-size:11px;color:var(--t4);margin-bottom:6px">LOOP NAME (automatisch)</div><div style="font-size:16px;font-weight:600;color:var(--g)" id="f-ln-auto">Collateral Token / Borrow Token</div></div><div class="fr"><div class="fg"><label>Start Datum (leer = jetzt)</label><input id="f-ld" type="date"></div><div class="fg"><label>Start Uhrzeit</label><input id="f-lt" type="time"></div></div><div style="background:var(--yb);border:1px solid var(--y);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--y);font-weight:600;margin-bottom:10px">📥 START COLLATERAL</div><div class="fr"><div class="fg"><label>Investment in USDC</label><input id="f-lcb" type="number" step="any" placeholder="1000" oninput="calcLoopData()"></div><div class="fg"><label>Collateral Token</label><input id="f-lct" placeholder="ETH" oninput="updateLoopName()"></div></div><div class="fr" style="margin-top:10px"><div class="fg"><label>Tokenmenge</label><input id="f-lcsm" type="number" step="any" placeholder="0.42" oninput="calcLoopData()"></div><div class="fg"><label>Tokenpreis ($, auto)</label><input id="f-lcp" type="number" step="any" readonly style="background:var(--bg3);color:var(--t3)"></div></div><div class="fr" style="margin-top:10px"><div class="fg"><label>Supply APY (%)</label><input id="f-lsa" type="number" step="0.01" placeholder="8.5"></div></div></div><div style="background:var(--rb);border:1px solid var(--r);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--r);font-weight:600;margin-bottom:10px">📤 BORROW</div><div class="fr"><div class="fg"><label>Borrow Token</label><input id="f-lbt" placeholder="USDC" oninput="updateLoopName()"></div><div class="fg"><label>Borrow APY (%)</label><input id="f-lba" type="number" step="0.01" placeholder="3.2"></div></div></div><div style="background:rgba(77,163,255,0.08);border:1px solid var(--bl);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--bl);font-weight:600;margin-bottom:10px">📊 OFFENE POSITION</div><div class="fr"><div class="fg"><label>Collateral Tokenmenge aktuell</label><input id="f-lce" type="number" step="any" placeholder="1.12"></div><div class="fg"><label>Borrow Tokenmenge aktuell</label><input id="f-lbe" type="number" step="any" placeholder="500"></div></div><div class="hnt" style="margin:4px 0 0">Hebel und gehebelte APY werden erst in der offenen Position angezeigt.</div></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hLoopCr()">Erstellen</button></div></div></div>';
+      '<div class="ov" onclick="cm();R()"><div class="mdl" style="max-width:520px" onclick="event.stopPropagation()"><div class="mdt">Neuen Loop erstellen</div><div style="background:var(--bg3);padding:12px;border-radius:8px;margin-bottom:16px;border:1px solid var(--bd)"><div style="font-size:11px;color:var(--t4);margin-bottom:6px">LOOP NAME (automatisch)</div><div style="font-size:16px;font-weight:600;color:var(--g)" id="f-ln-auto">Collateral Token / Borrow Token</div></div><div class="fr"><div class="fg"><label>Start Datum (leer = jetzt)</label><input id="f-ld" type="date"></div><div class="fg"><label>Start Uhrzeit</label><input id="f-lt" type="time"></div></div><div style="background:var(--g-bg);border:1px solid rgba(0,255,163,0.22);border-radius:12px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--g);font-weight:600;margin-bottom:10px">📥 START COLLATERAL</div><div class="fr"><div class="fg"><label>Investment in USDC</label><input id="f-lcb" type="number" step="any" placeholder="1000" oninput="calcLoopData()"></div><div class="fg"><label>Collateral Token</label><input id="f-lct" placeholder="ETH" oninput="updateLoopName()"></div></div><div class="fr" style="margin-top:10px"><div class="fg"><label>Tokenmenge</label><input id="f-lcsm" type="number" step="any" placeholder="0.42" oninput="calcLoopData()"></div><div class="fg"><label>Tokenpreis ($, auto)</label><input id="f-lcp" type="number" step="any" readonly style="background:var(--bg3);color:var(--t3)"></div></div><div class="fr" style="margin-top:10px"><div class="fg"><label>Supply APY (%)</label><input id="f-lsa" type="number" step="0.01" placeholder="8.5"></div></div></div><div style="background:var(--rb);border:1px solid var(--r);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--r);font-weight:600;margin-bottom:10px">📤 BORROW</div><div class="fr"><div class="fg"><label>Borrow Token</label><input id="f-lbt" placeholder="USDC" oninput="updateLoopName()"></div><div class="fg"><label>Borrow APY (%)</label><input id="f-lba" type="number" step="0.01" placeholder="3.2"></div></div></div><div style="background:rgba(77,163,255,0.08);border:1px solid var(--bl);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--bl);font-weight:600;margin-bottom:10px">📊 OFFENE POSITION</div><div class="fr"><div class="fg"><label>Collateral Tokenmenge aktuell</label><input id="f-lce" type="number" step="any" placeholder="1.12"></div><div class="fg"><label>Borrow Tokenmenge aktuell</label><input id="f-lbe" type="number" step="any" placeholder="500"></div></div><div class="hnt" style="margin:4px 0 0">Hebel und gehebelte APY werden erst in der offenen Position angezeigt.</div></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hLoopCr()">Erstellen</button></div></div></div>';
   }
   if (M.fnew) {
     h +=

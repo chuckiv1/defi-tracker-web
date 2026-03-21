@@ -5,13 +5,15 @@
   margin-bottom: 24px;
 }
 .sc {
-  background: linear-gradient(135deg, #15171c, var(--bg3));
-  border: 1px solid var(--bd);
-  border-radius: 12px;
-  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  padding: 15px 16px;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  backdrop-filter: blur(var(--panel-blur));
+  box-shadow: var(--shadow-panel);
 }
 .sl {
   font-size: 10px;
@@ -24,7 +26,8 @@
   font-size: 20px;
   font-weight: 700;
   font-family: "JetBrains Mono", monospace;
-  color: #f0f2f5;
+  color: var(--t);
+  letter-spacing: -0.03em;
 }
 .sv .u {
   font-size: 11px;
@@ -33,12 +36,14 @@
 }
 .sv.g {
   color: var(--g);
+  text-shadow: 0 0 16px rgba(0, 255, 163, 0.18);
 }
 .sv.g .u {
   color: var(--g);
 }
 .sv.r {
   color: var(--r);
+  text-shadow: 0 0 16px rgba(255, 107, 107, 0.16);
 }
 .sh {
   display: flex;
@@ -51,25 +56,27 @@
 .st {
   font-size: 15px;
   font-weight: 600;
-  color: var(--t2);
+  color: var(--t);
 }
 
 .cd {
-  background: var(--bg2);
-  border: 1px solid var(--bd);
-  border-radius: 12px;
+  background: var(--panel);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
   overflow: hidden;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   min-height: 100%;
+  backdrop-filter: blur(var(--panel-blur));
+  box-shadow: var(--shadow-panel);
 }
 .cdh {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 14px 16px 10px;
-  border-bottom: 1px solid var(--bd);
+  padding: 15px 16px 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 .cdn {
   font-size: 14px;
@@ -87,7 +94,8 @@
   font-family: "JetBrains Mono", monospace;
   background: var(--gb);
   padding: 3px 9px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(0, 255, 163, 0.18);
 }
 .cda.mt {
   color: var(--r);
@@ -95,10 +103,11 @@
 }
 .cda.z {
   color: var(--t3);
-  background: rgba(138, 143, 152, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 .cdb {
-  padding: 10px 16px;
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -112,12 +121,12 @@
 }
 .cdl {
   font-size: 12px;
-  color: var(--t4);
+  color: var(--t3);
 }
 .cdv {
   font-size: 12px;
   font-family: "JetBrains Mono", monospace;
-  color: var(--t2);
+  color: var(--t);
   font-weight: 500;
 }
 .cdv.g {
@@ -130,8 +139,8 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 16px;
-  border-top: 1px solid var(--bd);
+  padding: 11px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
   gap: 12px;
   margin-top: auto;
 }
@@ -151,4 +160,5 @@
   padding: 2px 8px;
   border-radius: 12px;
   margin-left: 6px;
+  border: 1px solid rgba(255, 196, 77, 0.2);
 }

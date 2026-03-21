@@ -1,8 +1,9 @@
 .peg-box {
-  background: var(--bg2);
-  border: 1px solid var(--bd);
-  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-sm);
   padding: 12px 14px;
+  backdrop-filter: blur(var(--panel-blur));
 }
 .peg-grid {
   display: grid;
@@ -39,13 +40,14 @@
   margin-bottom: 24px;
 }
 .pcd {
-  background: var(--bg2);
-  border: 1px solid var(--bd);
-  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-sm);
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 3px;
+  backdrop-filter: blur(var(--panel-blur));
 }
 .pcl {
   font-size: 10px;
@@ -57,7 +59,7 @@
   font-size: 16px;
   font-weight: 700;
   font-family: "JetBrains Mono", monospace;
-  color: var(--t4);
+  color: var(--t2);
 }
 .pca.g {
   color: var(--g);
@@ -76,11 +78,13 @@
 }
 
 .exc {
-  background: var(--bg2);
-  border: 1px solid var(--bd);
-  border-radius: 12px;
+  background: var(--panel);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
   padding: 16px;
   margin-bottom: 10px;
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(var(--panel-blur));
 }
 .exc-h {
   display: flex;
@@ -115,15 +119,17 @@
   color: var(--t2);
 }
 .pos {
-  background: var(--bg2);
-  border: 1px solid var(--bd);
-  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.025));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
   overflow: hidden;
   margin-bottom: 10px;
   cursor: pointer;
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(var(--panel-blur));
 }
 .pos:hover {
-  border-color: var(--bd2);
+  border-color: rgba(0, 255, 163, 0.18);
 }
 .pos-h {
   display: flex;
@@ -186,6 +192,8 @@
   border-radius: 10px;
   font-family: "JetBrains Mono", monospace;
   animation: pulse 2s infinite;
+  border: 1px solid rgba(0, 255, 163, 0.18);
+  box-shadow: 0 0 12px rgba(0, 255, 163, 0.14);
 }
 @keyframes pulse {
   0%,
@@ -206,16 +214,17 @@
   font-size: 11px;
   color: var(--t4);
   padding: 8px 10px;
-  background: var(--bg2);
-  border: 1px dashed var(--bd2);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(255, 255, 255, 0.14);
   border-radius: 8px;
 }
 .tok-suggest-panel {
-  background: var(--bg2);
-  border: 1px solid var(--bd);
-  border-radius: 12px;
+  background: rgba(12, 12, 12, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
   overflow: hidden;
-  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.24);
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(14px);
 }
 .tok-suggest-scroll {
   max-height: 240px;
@@ -258,7 +267,7 @@
   border-top: none;
 }
 .tok-suggest-item:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.05);
   color: var(--g);
 }
 .tok-suggest-item small {
@@ -270,7 +279,7 @@
   font-size: 11px;
   color: var(--t4);
   padding: 10px 12px;
-  background: var(--bg2);
-  border: 1px solid var(--bd);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
 }

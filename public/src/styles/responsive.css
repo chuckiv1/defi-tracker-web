@@ -1,9 +1,3 @@
-@media (max-width: 600px) {
-  .pos-b {
-    grid-template-columns: 1fr;
-  }
-}
-
 @media (max-width: 500px) {
   .sm {
     grid-template-columns: 1fr 1fr;
@@ -15,13 +9,16 @@
     grid-template-columns: 1fr;
   }
   .pgd {
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: 1fr;
   }
   .dha {
     font-size: 24px;
   }
   .dhn {
     font-size: 19px;
+  }
+  .mn {
+    padding: 18px 14px 72px;
   }
 }
 
@@ -44,5 +41,21 @@
   }
   .msg-card h2 {
     font-size: 23px;
+  }
+  .hdr {
+    padding: 12px 14px;
+  }
+  .sc,
+  .cd,
+  .lt,
+  .tbl,
+  .msg-card,
+  .msg-pane,
+  .msg-side,
+  .msg-analytics,
+  .exc,
+  .pos,
+  .mdl {
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
   }
 }

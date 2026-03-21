@@ -3,9 +3,10 @@
   justify-content: space-between;
   align-items: center;
   padding: 14px 20px;
-  border-bottom: 1px solid var(--bd);
-  background: rgba(13, 15, 19, 0.95);
-  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(5, 5, 5, 0.76);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.28);
   position: sticky;
   top: 0;
   z-index: 50;
@@ -19,13 +20,14 @@
 }
 .tt {
   font-size: 17px;
-  font-weight: 700;
-  color: #f0f2f5;
+  font-weight: 800;
+  color: var(--t);
+  letter-spacing: -0.02em;
 }
 .su {
   font-size: 10px;
-  color: var(--t4);
-  letter-spacing: 0.08em;
+  color: var(--t3);
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 .hr {
@@ -37,42 +39,66 @@
 .nv {
   display: flex;
   gap: 3px;
-  background: var(--bg2);
-  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-sm);
   padding: 3px;
+  backdrop-filter: blur(var(--panel-blur));
 }
 .nv button {
   background: 0 0;
   border: none;
-  color: var(--t4);
+  color: var(--t3);
   padding: 8px 14px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 13px;
-  font-weight: 500;
-  font-family: "DM Sans", sans-serif;
+  font-weight: 600;
+  font-family: "Inter", sans-serif;
   white-space: nowrap;
+  transition:
+    transform 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease;
+}
+.nv button:hover {
+  color: var(--t2);
+  transform: scale(1.02);
 }
 .nv button.a {
-  background: var(--bd);
-  color: #f0f2f5;
+  background: rgba(0, 255, 163, 0.12);
+  color: var(--t);
+  box-shadow: var(--shadow-mint);
 }
 .undo-wrap {
   position: relative;
 }
 .undo-btn {
-  background: var(--bg2);
-  border: 1px solid var(--bd);
-  color: var(--t3);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--t2);
   padding: 6px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 13px;
-  font-family: "DM Sans", sans-serif;
+  font-family: "Inter", sans-serif;
   display: flex;
   align-items: center;
   gap: 5px;
   white-space: nowrap;
+  backdrop-filter: blur(var(--panel-blur));
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+.undo-btn:hover:not(:disabled) {
+  transform: scale(1.02);
+  color: var(--t);
+  border-color: rgba(0, 255, 163, 0.18);
+  box-shadow: var(--shadow-mint);
 }
 .undo-btn:disabled {
   opacity: 0.3;
@@ -82,13 +108,14 @@
   position: absolute;
   right: 0;
   top: calc(100% + 6px);
-  background: var(--bg3);
-  border: 1px solid var(--bd2);
-  border-radius: 10px;
+  background: rgba(10, 10, 10, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-md);
   min-width: 280px;
   z-index: 60;
   overflow: hidden;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(16px);
+  box-shadow: var(--shadow-panel);
 }
 .undo-item {
   display: flex;
@@ -101,7 +128,7 @@
   gap: 8px;
 }
 .undo-item:hover {
-  background: var(--bg2);
+  background: rgba(255, 255, 255, 0.04);
 }
 .undo-item:last-child {
   border-bottom: none;
@@ -122,5 +149,5 @@
 .mn {
   max-width: 960px;
   margin: 0 auto;
-  padding: 20px 16px 80px;
+  padding: 22px 16px 80px;
 }

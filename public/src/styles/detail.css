@@ -9,7 +9,7 @@
 .dhn {
   font-size: 22px;
   font-weight: 700;
-  color: #f0f2f5;
+  color: var(--t);
 }
 .dha {
   font-size: 28px;
@@ -29,6 +29,7 @@
   border-radius: 16px;
   margin-top: 5px;
   margin-right: 4px;
+  border: 1px solid transparent;
 }
 .bdg.ac {
   color: var(--g);
@@ -36,15 +37,18 @@
 }
 .bdg.en {
   color: var(--t3);
-  background: rgba(138, 143, 152, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 .bdg.frf {
-  color: var(--o);
-  background: var(--ob);
+  color: var(--t2);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 .bdg.hdg {
-  color: var(--p);
-  background: var(--pb);
+  color: var(--t2);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 .dsg {
   display: grid;
@@ -52,13 +56,14 @@
   gap: 10px;
 }
 .dsi {
-  background: var(--bg2);
-  border: 1px solid var(--bd);
-  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-sm);
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 3px;
+  backdrop-filter: blur(var(--panel-blur));
 }
 .dsl {
   font-size: 10px;
@@ -79,11 +84,13 @@
   color: var(--r);
 }
 .ibx {
-  background: var(--bg2);
-  border: 1px solid var(--bd);
-  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
   padding: 16px;
   margin-top: 10px;
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(var(--panel-blur));
 }
 .igr {
   display: grid;
@@ -107,15 +114,17 @@
   font-weight: 500;
 }
 .nbx {
-  background: var(--bg2);
-  border: 1px solid var(--bd);
-  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
   padding: 16px;
   margin-top: 10px;
   color: var(--t2);
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(var(--panel-blur));
 }
 .nem {
   color: var(--t5);

@@ -1,21 +1,32 @@
 .bt {
-  border: none;
+  border: 1px solid transparent;
   cursor: pointer;
-  font-family: "DM Sans", sans-serif;
-  border-radius: 8px;
+  font-family: "Inter", sans-serif;
+  border-radius: var(--radius-sm);
   font-weight: 600;
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  justify-content: center;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
 }
 .bt:active {
   opacity: 0.8;
 }
+.bt:hover {
+  transform: translateY(-1px) scale(1.02);
+}
 .bp {
-  background: linear-gradient(135deg, var(--g), #00c98b);
+  background: linear-gradient(135deg, var(--g), #00d387);
   color: var(--bg);
   padding: 10px 18px;
   font-size: 13px;
+  box-shadow: var(--shadow-mint);
 }
 .bs {
   padding: 7px 14px;
@@ -26,56 +37,72 @@
   color: var(--r);
   padding: 6px 14px;
   font-size: 12px;
+  border-color: rgba(255, 107, 107, 0.22);
   border-radius: 6px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 .bb {
-  background: var(--blb);
-  color: var(--bl);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--t2);
   padding: 6px 14px;
   font-size: 12px;
+  border-color: rgba(255, 255, 255, 0.12);
   border-radius: 6px;
 }
 .by {
-  background: var(--yb);
-  color: var(--y);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--t2);
   padding: 7px 14px;
   font-size: 12px;
+  border-color: rgba(255, 255, 255, 0.12);
   border-radius: 6px;
 }
 .bpr {
-  background: var(--pb);
-  color: var(--p);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--t2);
   padding: 7px 14px;
   font-size: 12px;
+  border-color: rgba(255, 255, 255, 0.12);
   border-radius: 6px;
 }
 .bo {
-  background: var(--ob);
-  color: #fff;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--t2);
   padding: 7px 14px;
   font-size: 12px;
+  border-color: rgba(255, 255, 255, 0.12);
   border-radius: 6px;
 }
 .bk {
   background: 0 0;
-  color: var(--t4);
+  color: var(--t3);
   font-size: 13px;
   padding: 4px 0;
   margin-bottom: 14px;
+  border: none;
+}
+.bk:hover {
+  transform: none;
+  color: var(--t);
 }
 .bcn {
-  background: var(--bg2);
-  border: 1px solid var(--bd2);
-  color: var(--t3);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--t2);
   padding: 10px 18px;
   font-size: 13px;
+  backdrop-filter: blur(var(--panel-blur));
 }
 .bic {
   background: 0 0;
-  color: var(--t5);
+  color: var(--t4);
   font-size: 14px;
   padding: 2px 6px;
   border-radius: 4px;
+}
+.bic:hover {
+  transform: none;
+  color: var(--t2);
 }
 .bed {
   background: 0 0;
@@ -83,28 +110,42 @@
   font-size: 12px;
   padding: 2px 6px;
   border-radius: 4px;
+  border: none;
 }
 .bed:hover {
-  color: var(--bl);
+  transform: none;
+  color: var(--g);
 }
 .vtg {
   display: flex;
   gap: 3px;
-  background: var(--bg2);
-  border-radius: 8px;
-  padding: 2px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  backdrop-filter: blur(var(--panel-blur));
 }
 .vtg button {
   background: 0 0;
   border: none;
-  color: var(--t4);
+  color: var(--t3);
   padding: 5px 10px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 16px;
   line-height: 1;
+  transition:
+    transform 160ms ease,
+    color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+.vtg button:hover {
+  transform: scale(1.02);
+  color: var(--t2);
 }
 .vtg button.a {
-  background: var(--bd);
-  color: #f0f2f5;
+  background: rgba(0, 255, 163, 0.12);
+  color: var(--t);
+  box-shadow: var(--shadow-mint);
 }

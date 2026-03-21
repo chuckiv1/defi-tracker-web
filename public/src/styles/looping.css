@@ -8,22 +8,32 @@
 
 .col-btn {
   background: 0 0;
-  border: 1px solid var(--bd);
-  color: var(--t3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--t2);
   padding: 8px 14px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 12px;
-  font-family: "DM Sans", sans-serif;
+  font-family: "Inter", sans-serif;
   display: flex;
   align-items: center;
   gap: 6px;
   margin-top: 10px;
   width: 100%;
   justify-content: center;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(var(--panel-blur));
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
 }
 .col-btn:hover {
-  background: var(--bg2);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(0, 255, 163, 0.18);
+  box-shadow: var(--shadow-mint);
+  transform: scale(1.02);
 }
 .col-btn .arr {
   transition: transform 0.2s;
@@ -97,18 +107,20 @@
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  border: 2px solid var(--y);
+  border: 2px solid rgba(0, 255, 163, 0.45);
   background: var(--bg);
 }
 .tli.cur .tld {
-  background: var(--y);
-  box-shadow: 0 0 8px rgba(255, 196, 77, 0.4);
+  background: var(--g);
+  box-shadow: 0 0 8px rgba(0, 255, 163, 0.35);
 }
 .tlc {
-  background: var(--bg2);
-  border: 1px solid var(--bd);
-  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-sm);
   padding: 14px 16px;
+  backdrop-filter: blur(var(--panel-blur));
+  box-shadow: var(--shadow-panel);
 }
 .tlh {
   display: flex;
@@ -160,12 +172,14 @@
   margin-left: 6px;
 }
 .tlch.up {
-  color: #00e5a0;
-  background: rgba(0, 229, 160, 0.1);
+  color: var(--g);
+  background: rgba(0, 255, 163, 0.12);
+  border: 1px solid rgba(0, 255, 163, 0.18);
 }
 .tlch.dn {
   color: #ff6b6b;
-  background: rgba(255, 77, 77, 0.1);
+  background: rgba(255, 107, 107, 0.12);
+  border: 1px solid rgba(255, 107, 107, 0.18);
 }
 .tl-note {
   font-size: 11px;
