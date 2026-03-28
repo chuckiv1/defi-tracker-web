@@ -19,6 +19,16 @@ function createExchangeService({ db, fs, path, WSClient, fetchImpl, baseDir }) {
   }
 
   function cacheSet(key, value, ttlMs = EXCHANGE_CACHE_MS) {
+    if (exchangeLookupCache.size > 500) {
+      const now = Date.now();
+      for (const [k, v] of exchangeLookupCache) {
+        if (!v || !v.expiresAt || now > v.expiresAt) exchangeLookupCache.delete(k);
+      }
+      if (exchangeLookupCache.size > 500) {
+        const oldest = [...exchangeLookupCache.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt);
+        for (let i = 0; i < 100 && i < oldest.length; i++) exchangeLookupCache.delete(oldest[i][0]);
+      }
+    }
     exchangeLookupCache.set(key, { value, expiresAt: Date.now() + ttlMs });
     return value;
   }
@@ -48,6 +58,7 @@ function createExchangeService({ db, fs, path, WSClient, fetchImpl, baseDir }) {
   function normalizeExchangeProvider(name) {
     const value = String(name || '').trim().toLowerCase();
     if (!value) return null;
+    if (value.includes('grvt')) return 'grvt';
     if (value.includes('extended') || value.includes('extendet')) return 'extended';
     if (value.includes('hyperliquid') || value === 'hl') return 'hyperliquid';
     if (value.includes('variational') || value.includes('omni')) return 'variational';
@@ -688,9 +699,100 @@ function createExchangeService({ db, fs, path, WSClient, fetchImpl, baseDir }) {
     });
   }
 
+  function grvtNsToMs(ns) {
+    if (typeof ns === 'string') {
+      const trimmed = ns.trim();
+      if (!trimmed) return 0;
+      try {
+        const big = BigInt(trimmed);
+        return big > 1000000000000000n ? Number(big / 1000000n) : Number(big);
+      } catch (_error) {
+        return 0;
+      }
+    }
+    const value = Number(ns);
+    if (!Number.isFinite(value) || !(value > 0)) return 0;
+    return value > 1e15 ? Math.floor(value / 1e6) : value;
+  }
+
+  async function getGrvtPerpMarkets() {
+    const cached = cacheGet('grvt_perp_markets');
+    if (cached) return cached;
+    const payload = await fetchJson('https://market-data.grvt.io/full/v1/all_instruments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ is_active: true }),
+    });
+    const rows = payload && Array.isArray(payload.result) ? payload.result : [];
+    const items = rows.filter((row) => row && row.kind === 'PERPETUAL' && row.instrument && row.base && ['USDT', 'USDC'].includes(String(row.quote || '').toUpperCase())).map((row) => ({
+      symbol: String(row.base || '').toUpperCase(),
+      market: String(row.instrument || '').trim(),
+      quote: String(row.quote || '').toUpperCase(),
+      intervalSeconds: (parseFloat(row.funding_interval_hours) || 8) * 3600,
+      label: `${String(row.base || '').toUpperCase()} perpetual ${String(row.quote || '').toUpperCase()}`,
+    }));
+    return cacheSet('grvt_perp_markets', items);
+  }
+
+  async function searchGrvtSymbols(query) {
+    const q = normalizeLookupSymbol(query, 30);
+    const rows = await getGrvtPerpMarkets();
+    return rows.map((row) => ({ ...row, rank: Math.min(rankLookup(row.symbol, q), rankLookup(row.market, q), rankLookup(row.label, q)) }))
+      .filter((row) => !q || row.rank < 9)
+      .sort((a, b) => (a.rank !== b.rank ? a.rank - b.rank : preferUsdQuote(a.quote, b.quote) || a.market.localeCompare(b.market)))
+      .slice(0, 12);
+  }
+
+  async function resolveGrvtMarket(token) {
+    const normalized = normalizeLookupSymbol(token, 24);
+    if (!normalized) throw new Error('Ungueltiges GRVT-Symbol');
+    const rows = await getGrvtPerpMarkets();
+    const market = rows.map((row) => ({ ...row, rank: Math.min(rankLookup(row.market, normalized), rankLookup(row.symbol, normalized)) }))
+      .filter((row) => row.rank < 9)
+      .sort((a, b) => (a.rank !== b.rank ? a.rank - b.rank : preferUsdQuote(a.quote, b.quote) || a.market.localeCompare(b.market)))[0];
+    if (!market) throw new Error(`GRVT-Markt fuer ${normalized} nicht gefunden`);
+    return market;
+  }
+
+  async function getGrvtQuote(token, mode, exchangeName) {
+    const market = await resolveGrvtMarket(token);
+    const payload = await fetchJson('https://market-data.grvt.io/full/v1/ticker', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ instrument: market.market }),
+    });
+    const row = payload && payload.result ? payload.result : null;
+    if (!row) throw new Error(`GRVT-Ticker fuer ${market.market} nicht gefunden`);
+    return buildQuotePayload('grvt', exchangeName, market.market, market.symbol, parseFloat(row.mark_price) || parseFloat(row.last_price) || 0, parseFloat(row.index_price) || parseFloat(row.last_price) || 0, parseFloat(row.best_bid_price) || 0, parseFloat(row.best_ask_price) || 0, mode, 'GRVT ticker');
+  }
+
+  async function getGrvtFunding(token, exchangeName) {
+    const market = await resolveGrvtMarket(token);
+    const [tickerPayload, historyPayload] = await Promise.all([
+      fetchJson('https://market-data.grvt.io/full/v1/ticker', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ instrument: market.market }),
+      }),
+      fetchJson('https://market-data.grvt.io/full/v1/funding', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ instrument: market.market, limit: 30 }),
+      }),
+    ]);
+    const ticker = tickerPayload && tickerPayload.result ? tickerPayload.result : null;
+    const settled = ((historyPayload && Array.isArray(historyPayload.result)) ? historyPayload.result : []).map((item) => ({
+      time: grvtNsToMs(item.funding_time),
+      fundingRate: parseFloat(item.funding_rate),
+      intervalSeconds: (parseFloat(item.funding_interval_hours) || (market.intervalSeconds / 3600) || 8) * 3600,
+    }));
+    return buildFundingPayload('grvt', exchangeName, market.market, market.symbol, ticker ? parseFloat(ticker.funding_rate) : null, market.intervalSeconds || 28800, settled, { nextFundingTime: ticker ? grvtNsToMs(ticker.next_funding_time) : 0 });
+  }
+
   async function searchSymbolsForExchange(exchangeName, query) {
     const provider = normalizeExchangeProvider(exchangeName);
     if (!provider) throw new Error('Boerse wird noch nicht unterstuetzt');
+    if (provider === 'grvt') return { provider, items: await searchGrvtSymbols(query) };
     if (provider === 'extended') return { provider, items: await searchExtendedMarkets(query) };
     if (provider === 'hyperliquid') return { provider, items: await searchHyperliquidSymbols(query) };
     if (provider === 'variational') return { provider, items: await searchVariationalSymbols(query) };
@@ -701,6 +803,7 @@ function createExchangeService({ db, fs, path, WSClient, fetchImpl, baseDir }) {
   async function getExchangeQuote(exchangeName, token, mode) {
     const provider = normalizeExchangeProvider(exchangeName);
     if (!provider) throw new Error('Boerse wird noch nicht unterstuetzt');
+    if (provider === 'grvt') return getGrvtQuote(token, mode, exchangeName);
     if (provider === 'extended') return getExtendedQuote(token, mode, exchangeName);
     if (provider === 'hyperliquid') return getHyperliquidQuote(token, mode, exchangeName);
     if (provider === 'variational') return getVariationalQuote(token, mode, exchangeName);
@@ -712,6 +815,7 @@ function createExchangeService({ db, fs, path, WSClient, fetchImpl, baseDir }) {
     if (mode === 'spot') return null;
     const provider = normalizeExchangeProvider(exchangeName);
     if (!provider) throw new Error('Boerse wird noch nicht unterstuetzt');
+    if (provider === 'grvt') return getGrvtFunding(token, exchangeName);
     if (provider === 'extended') return getExtendedFunding(token, exchangeName);
     if (provider === 'hyperliquid') return getHyperliquidFunding(token, exchangeName);
     if (provider === 'variational') return getVariationalFunding(token, exchangeName);

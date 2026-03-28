@@ -70,6 +70,7 @@ var FRF_TOKEN_REQ = { new: 0, edit: 0 },
   FRF_LIVE_LOADING = {},
   FRF_LIVE_NEXT_AT = {},
   FRF_LIVE_TIMER = {};
+var BG_SIGNATURE = "";
 var LOOP_PEG_QUOTES = {},
   LOOP_PEG_LOADING = {},
   LOOP_PEG_NEXT_AT = {};
@@ -457,7 +458,7 @@ function onlineBadge(ts) {
 
 function ci(s) {
   var h = s.investmentHistory;
-  return h && h.length ? h[h.length - 1].amount : 0;
+  return h && h.length ? h.reduce((a, x) => a + (parseFloat(x.amount) || 0), 0) : 0;
 }
 function tr(s) {
   return s.rewards.reduce((a, r) => a + r.amount, 0);
@@ -474,10 +475,14 @@ function posFloatingPnl(p) {
     f += (pr - p.entryPriceLong) * p.tokenAmount;
   return f;
 }
+function frfFundingContribution(p) {
+  var funding = latestFunding(p.fundingShort) + latestFunding(p.fundingLong);
+  if (p && p.endedAt && p.closePnlIncludesFunding) return 0;
+  return funding;
+}
 function posPnl(p) {
   return (
-    latestFunding(p.fundingShort) +
-    latestFunding(p.fundingLong) +
+    frfFundingContribution(p) +
     (p.closePnlShort || 0) +
     (p.closePnlLong || 0) +
     posFloatingPnl(p)
@@ -512,7 +517,9 @@ function bp(s, e) {
     vp.push({ amount: posPnl(x), date: d, includeInAPR: true });
   });
   var ps = [];
+  var runningInvestment = 0;
   for (var i = 0; i < h.length; i++) {
+    runningInvestment += parseFloat(h[i].amount) || 0;
     var st = h[i].date,
       en = i < h.length - 1 ? h[i + 1].date : e;
     var dy = db(st, en);
@@ -532,12 +539,11 @@ function bp(s, e) {
     var rs = rw.reduce((a, r) => a + r.amount, 0),
       pls = pl.reduce((a, p) => a + p.amount, 0),
       gs = rs + pls,
-      ap = calcApr(gs, h[i].amount, dy);
-    var pv = i > 0 ? h[i - 1].amount : null,
-      ch = pv !== null ? h[i].amount - pv : null;
+      ap = calcApr(gs, runningInvestment, dy);
+    var ch = i > 0 ? parseFloat(h[i].amount) || 0 : null;
     ps.push({
       id: h[i].id,
-      amount: h[i].amount,
+      amount: runningInvestment,
       date: h[i].date,
       endDate: en,
       days: dy,
@@ -659,7 +665,7 @@ function sortStrategies(arr, isPast) {
 function frfAprForSort(p) {
   var end = p.endedAt || new Date().toISOString(),
     dur = db(p.startDate, end),
-    cap = posCapital(p),
+    cap = posAprCapital(p, FR.positions, FR.exchanges, end),
     pnl = posPnl(p);
   return calcApr(pnl - (p.fees || 0), cap, dur);
 }
@@ -711,8 +717,7 @@ function posIncl(p) {
 }
 function runningFunding(p) {
   return (
-    latestFunding(p.fundingShort) +
-    latestFunding(p.fundingLong) +
+    frfFundingContribution(p) +
     posFloatingPnl(p)
   );
 }
@@ -735,6 +740,89 @@ function posEntrySize(p) {
       ? (p.entryPriceShort + p.entryPriceLong) / 2
       : p.entryPriceShort || p.entryPriceLong || 0;
   return p.tokenAmount ? p.tokenAmount * ep : p.positionSizeUsd || 0;
+}
+function marginTotalAt(exchange, atIso) {
+  var atMs = new Date(atIso).getTime();
+  if (!exchange || !Array.isArray(exchange.marginHistory) || !Number.isFinite(atMs)) return 0;
+  return exchange.marginHistory.reduce(function (sum, item) {
+    var itemMs = new Date(item.date).getTime();
+    if (!Number.isFinite(itemMs) || itemMs > atMs) return sum;
+    return sum + (parseFloat(item.amount) || 0);
+  }, 0);
+}
+function positionUsesExchange(position, exchangeId) {
+  return (
+    position.shortExchangeId === exchangeId ||
+    (!position.longIsSpot && position.longExchangeId === exchangeId)
+  );
+}
+function positionActiveAt(position, atIso) {
+  var atMs = new Date(atIso).getTime(),
+    startMs = new Date(position.startDate || 0).getTime(),
+    endMs = position.endedAt ? new Date(position.endedAt).getTime() : Infinity;
+  if (!Number.isFinite(atMs) || !Number.isFinite(startMs)) return false;
+  return startMs <= atMs && atMs < endMs;
+}
+function posCapitalAt(position, atIso, positions, exchanges) {
+  if (!position) return 0;
+  var basis = posEntrySize(position) || position.positionSizeUsd || 0;
+  if (!(basis > 0)) return 0;
+  var cap = 0;
+  var exchangeIds = [position.shortExchangeId];
+  if (!position.longIsSpot && position.longExchangeId) exchangeIds.push(position.longExchangeId);
+  exchangeIds.forEach(function (exchangeId) {
+    var exchange = (exchanges || []).find(function (item) {
+      return item.id === exchangeId;
+    });
+    if (!exchange) return;
+    var active = (positions || []).filter(function (item) {
+      return positionActiveAt(item, atIso) && positionUsesExchange(item, exchangeId);
+    });
+    var total = active.reduce(function (sum, item) {
+      return sum + (posEntrySize(item) || item.positionSizeUsd || 0);
+    }, 0);
+    if (!(total > 0)) return;
+    cap += marginTotalAt(exchange, atIso) * (basis / total);
+  });
+  return cap || basis;
+}
+function posAprCapital(position, positions, exchanges, nowIso) {
+  if (!position) return 0;
+  var startIso = position.startDate || nowIso,
+    endIso = position.endedAt || nowIso;
+  if (!startIso || !endIso) return posEntrySize(position) || position.positionSizeUsd || 0;
+  var startMs = new Date(startIso).getTime(),
+    endMs = new Date(endIso).getTime();
+  var markers = [startIso, endIso];
+  (exchanges || []).forEach(function (exchange) {
+    if (!positionUsesExchange(position, exchange.id)) return;
+    (exchange.marginHistory || []).forEach(function (entry) {
+      var timeMs = new Date(entry.date).getTime();
+      if (Number.isFinite(timeMs) && timeMs > startMs && timeMs < endMs) markers.push(entry.date);
+    });
+  });
+  (positions || []).forEach(function (item) {
+    if (!positionUsesExchange(item, position.shortExchangeId) && !positionUsesExchange(item, position.longExchangeId)) return;
+    var itemStartMs = new Date(item.startDate || 0).getTime();
+    var itemEndMs = item.endedAt ? new Date(item.endedAt).getTime() : NaN;
+    if (Number.isFinite(itemStartMs) && itemStartMs > startMs && itemStartMs < endMs) markers.push(item.startDate);
+    if (Number.isFinite(itemEndMs) && itemEndMs > startMs && itemEndMs < endMs) markers.push(item.endedAt);
+  });
+  markers = Array.from(new Set(markers)).sort(function (a, b) {
+    return new Date(a) - new Date(b);
+  });
+  var weighted = 0,
+    totalDays = 0;
+  for (var i = 0; i < markers.length - 1; i++) {
+    var segStart = markers[i],
+      segEnd = markers[i + 1],
+      days = db(segStart, segEnd);
+    if (!(days > 0)) continue;
+    var midIso = new Date((new Date(segStart).getTime() + new Date(segEnd).getTime()) / 2).toISOString();
+    weighted += posCapitalAt(position, midIso, positions, exchanges) * days;
+    totalDays += days;
+  }
+  return totalDays > 0 ? weighted / totalDays : posCapitalAt(position, endIso, positions, exchanges);
 }
 function posCapital(p) {
   if (p.longIsSpot) return posEntrySize(p) || p.positionSizeUsd || 1;
@@ -850,7 +938,7 @@ function fetchPrices(opts) {
       refreshLoopPegQuotes();
       if (rerender) R();
     })
-    .catch(() => {});
+    .catch((err) => console.warn('Request fehlgeschlagen:', err.message || err));
 }
 function loopTokenDatalist() {
   return (
@@ -895,22 +983,24 @@ function updateLoopRateLabels() {
   if (bl) bl.textContent = loopRateLabel("borrow", bt);
 }
 function loopPegKey(asset, reference) {
+  var normRef = String(reference || "").trim().toUpperCase();
+  if (normRef === 'WAVAX') normRef = 'AVAX';
   return (
     String(asset || "")
       .trim()
       .toUpperCase() +
     "__" +
-    String(reference || "")
-      .trim()
-      .toUpperCase()
+    normRef
   );
 }
 function loopPegMarketPrice(asset, reference) {
+  if (String(reference || '').trim().toUpperCase() === 'WAVAX') reference = 'AVAX';
   var assetPx = loopTokenPrice(asset, 0),
     referencePx = loopTokenPrice(reference, 0);
   return assetPx > 0 && referencePx > 0 ? assetPx / referencePx : 0;
 }
 function shouldFetchLoopPegQuote(asset, reference) {
+  if (String(reference || '').trim().toUpperCase() === 'WAVAX') reference = 'AVAX';
   return (
     String(asset || "")
       .trim()
@@ -927,6 +1017,7 @@ function requestLoopPegQuote(asset, reference, opts) {
   reference = String(reference || "")
     .trim()
     .toUpperCase();
+  if (reference === 'WAVAX') reference = 'AVAX';
   opts = opts || {};
   if (
     !asset ||
@@ -963,7 +1054,7 @@ function requestLoopPegQuote(asset, reference, opts) {
         if (opts.rerender) R();
       }
     })
-    .catch(function () {})
+    .catch(function (err) { console.warn('Request fehlgeschlagen:', err.message || err); })
     .finally(function () {
       LOOP_PEG_LOADING[key] = false;
     });
@@ -1002,6 +1093,9 @@ function loopPegInfo(asset, reference, entryPrice) {
     pairReference = String(reference || "")
       .trim()
       .toUpperCase();
+  if (pairReference === 'WAVAX') pairReference = 'AVAX';
+  if (!pairAsset && !pairReference) return null;
+  if (!pairReference && pairAsset === 'SAVAX') pairReference = 'AVAX';
   if (!pairAsset || !pairReference) return null;
   var key = loopPegKey(pairAsset, pairReference),
     cached = LOOP_PEG_QUOTES[key],
@@ -1143,7 +1237,7 @@ function fetchLoopOracleDefaults(kind) {
         calcLoopData();
       }
     })
-    .catch(function () {});
+    .catch(function (err) { console.warn('Request fehlgeschlagen:', err.message || err); });
 }
 
 function api(url, opts = {}) {
@@ -1340,7 +1434,7 @@ function loadLoops() {
       }
       alert((r.data && r.data.error) || "Loops konnten nicht geladen werden.");
     })
-    .catch(() => {});
+    .catch((err) => console.warn('Request fehlgeschlagen:', err.message || err));
 }
 function setPid(id) {
   PID = id;
@@ -1390,12 +1484,20 @@ function hLogin() {
       }
       alert(r.data.error || "Login fehlgeschlagen");
     })
-    .catch(() => {});
+    .catch((err) => console.warn('Request fehlgeschlagen:', err.message || err));
 }
 function hReg() {
   let e = document.getElementById("r-email").value,
     p1 = document.getElementById("r-p1").value,
     p2 = document.getElementById("r-p2").value;
+  if (!e || !e.includes('@') || !e.includes('.')) {
+    showFieldError('r-email', 'Bitte eine gueltige E-Mail-Adresse eingeben');
+    return;
+  }
+  if (p1.length < 8) {
+    showFieldError('r-p1', 'Passwort muss mindestens 8 Zeichen lang sein');
+    return;
+  }
   if (p1 !== p2) {
     showFieldError('r-p2', 'Passwörter stimmen nicht überein');
     return;
@@ -1416,7 +1518,7 @@ function hReg() {
         R();
       } else alert(r.data.error);
     })
-    .catch(() => {});
+    .catch((err) => console.warn('Request fehlgeschlagen:', err.message || err));
 }
 function verifyCooldownText() {
   var ms = Math.max(0, VERIFY_RETRY_AT - Date.now());
@@ -1565,7 +1667,7 @@ function adminRole(id, role) {
       if (M.adet && M.adet.acc && M.adet.acc.id === id) M.adet.acc.role = role;
       loadAdmin();
     })
-    .catch(() => {});
+    .catch((err) => console.warn('Request fehlgeschlagen:', err.message || err));
 }
 
 var FEAT = [];
@@ -1756,6 +1858,22 @@ function loopBorrowTokenAmount(l) {
 function loopLeverage(l) {
   return calculateLoopingTotals(l).leverage;
 }
+function loopCurrentRateSummary(startAmount, currentAmount, runtimeDays, invert) {
+  var start = parseFloat(startAmount || 0),
+    current = parseFloat(currentAmount || 0),
+    days = parseFloat(runtimeDays || 0);
+  if (!(start > 0) || !(current > 0)) return { nowPct: null, avgPct: null };
+  var nowPct = ((current - start) / start) * 100;
+  if (invert) nowPct = -nowPct;
+  var avgPct = days > 0 ? (nowPct / days) * 365 : null;
+  return { nowPct: nowPct, avgPct: avgPct };
+}
+function fmtLoopRateSummary(summary) {
+  if (!summary || summary.avgPct === null)
+    return 'avr. —';
+  var avgText = (summary.avgPct >= 0 ? '+' : '') + summary.avgPct.toFixed(2) + '%';
+  return 'avr. ' + avgText;
+}
 function loopNetApr(l) {
   return calculateLoopingTotals(l).netApr;
 }
@@ -1827,7 +1945,7 @@ function hLoopCr() {
       R();
       loadLoops();
     })
-    .catch(() => {});
+    .catch((err) => console.warn('Request fehlgeschlagen:', err.message || err));
 }
 function openLoopDetail(id) {
   var l = LO.find(function (x) {
@@ -1844,15 +1962,35 @@ function openLoopDetail(id) {
 }
 function renderLoopDetailPanel(selLoop, nw, inline) {
   var selTot = calculateLoopingTotals(selLoop),
+    startSupplyAmount = parseFloat(selLoop.startcollateralamount || selLoop.startCollateralAmount || 0) || 0,
+    postLoopSupplyAmount = parseFloat(selLoop.endcollateralamount || selLoop.endCollateralAmount || selTot.collateralAmount || 0) || 0,
+    postLoopBorrowAmount = parseFloat(selLoop.endborrowedamount || selLoop.endBorrowedAmount || selLoop.borrowedamount || selLoop.borrowedAmount || selTot.borrowTokenAmount || 0) || 0,
+    currentSupplyAmount = parseFloat(selLoop.currentcollateralamount || selLoop.currentCollateralAmount || postLoopSupplyAmount || 0) || 0,
+    currentBorrowAmount = parseFloat(selLoop.currentborrowedamount || selLoop.currentBorrowedAmount || postLoopBorrowAmount || 0) || 0,
+    startSupplyUsd = parseFloat(selLoop.startcollateral || selLoop.startCollateral || 0) || 0,
+    postLoopSupplyUsd = selTot.borrowPrice > 0 && postLoopSupplyAmount > 0 && selTot.price > 0 ? postLoopSupplyAmount * selTot.price : selTot.supplyUsd,
+    postLoopBorrowUsd = selTot.borrowPrice > 0 && postLoopBorrowAmount > 0 ? postLoopBorrowAmount * selTot.borrowPrice : selTot.borrowUsd,
     selPeg = loopPegInfo(
       selLoop.collateraltoken || selLoop.collateralToken,
       selLoop.pegreferencetoken ||
         selLoop.pegReferenceToken ||
         selLoop.borrowtoken ||
-        selLoop.borrowToken,
+      selLoop.borrowToken,
       selLoop.pegentryprice || selLoop.pegEntryPrice,
     ),
     selRuntime = db(selLoop.startdate, selLoop.enddate || selLoop.endDate || nw),
+    supplyNow = loopCurrentRateSummary(
+      selLoop.endcollateralamount || selLoop.endCollateralAmount || selLoop.startcollateralamount || selLoop.startCollateralAmount,
+      selLoop.currentcollateralamount || selLoop.currentCollateralAmount || selLoop.endcollateralamount || selLoop.endCollateralAmount || selLoop.startcollateralamount || selLoop.startCollateralAmount,
+      selRuntime,
+      false,
+    ),
+    borrowNow = loopCurrentRateSummary(
+      selLoop.endborrowedamount || selLoop.endBorrowedAmount || selLoop.borrowedamount || selLoop.borrowedAmount,
+      selLoop.currentborrowedamount || selLoop.currentBorrowedAmount || selLoop.endborrowedamount || selLoop.endBorrowedAmount || selLoop.borrowedamount || selLoop.borrowedAmount,
+      selRuntime,
+      true,
+    ),
     selStatus = selLoop.status || 'active',
     h = '';
   if (!inline)
@@ -1872,57 +2010,55 @@ function renderLoopDetailPanel(selLoop, nw, inline) {
     (selStatus === 'closed' ? 'en' : 'ac') +
     '">' +
     es(selStatus) +
-    '</span></div><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end"><span class="bdg ac" style="font-size:13px;padding:5px 10px">Hebel: ' +
+    '</span><div style="font-size:12px;color:var(--t3);margin-top:6px">Startmenge: ' +
+    fn(startSupplyAmount) +
+    ' ' +
+    es(selLoop.collateraltoken || '') +
+    '</div></div><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end"><span class="bdg ac" style="font-size:13px;padding:5px 10px">Hebel: ' +
     selTot.leverage.toFixed(2) +
     'x</span><div class="dha" style="font-size:20px">' +
     (selTot.netApr > 0 ? '+' : '') +
     selTot.netApr.toFixed(2) +
     '% <span class="u">Gehebelte APR</span></div></div></div>';
   h +=
-    '<div class="dsg"><div class="dsi"><span class="dsl">Start</span><span class="dsv">' +
-    fd(selLoop.startdate) +
-    '</span></div><div class="dsi"><span class="dsl">Ende</span><span class="dsv">' +
-    (selLoop.enddate || selLoop.endDate ? fd(selLoop.enddate || selLoop.endDate) : 'Offen') +
-    '</span></div><div class="dsi"><span class="dsl">Laufzeit</span><span class="dsv">' +
-    selRuntime.toFixed(1) +
-    ' T</span></div><div class="dsi"><span class="dsl">Collateral</span><span class="dsv">' +
-    fn(selTot.collateralAmount) +
-    ' ' +
-    es(selLoop.collateraltoken || '') +
-    '</span></div><div class="dsi"><span class="dsl">Borrow</span><span class="dsv">' +
-    fn(selTot.borrowTokenAmount) +
-    ' ' +
-    es(selLoop.borrowtoken || '') +
-    '</span></div><div class="dsi"><span class="dsl">Collateral Wert</span><span class="dsv">' +
-    fn(selTot.supplyUsd) +
-    ' USDC</span></div><div class="dsi"><span class="dsl">Borrow Wert</span><span class="dsv">' +
-    fn(selTot.borrowUsd) +
-    ' USDC</span></div></div>';
-  h +=
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px"><div style="background:var(--g-bg);padding:12px;border-radius:8px;border:1px solid var(--g);text-align:center"><div style="font-size:10px;color:var(--g);text-transform:uppercase">Supply</div><div style="font-size:15px;font-weight:600;color:var(--t);margin-top:4px">' +
-    fn(selTot.collateralAmount) +
+    fn(postLoopSupplyAmount) +
     ' ' +
     es(selLoop.collateraltoken || '') +
     '</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Wert: ' +
-    fn(selTot.supplyUsd) +
+    fn(postLoopSupplyUsd) +
     ' USDC</div><div style="font-size:12px;font-weight:600;color:' +
     (selTot.supplyRateApr > 0 ? 'var(--g)' : selTot.supplyRateApr < 0 ? 'var(--r)' : 'var(--t2)') +
     ';margin-top:8px;text-align:center">' +
     (selTot.supplyRateApr > 0 ? '+' : '') +
     selTot.supplyRateApr.toFixed(2) +
-    '% APR</div></div><div style="background:var(--r-bg);padding:12px;border-radius:8px;border:1px solid var(--r);text-align:center"><div style="font-size:10px;color:var(--r);text-transform:uppercase">Borrow</div><div style="font-size:15px;font-weight:600;color:var(--t);margin-top:4px">' +
-    fn(selTot.borrowTokenAmount) +
+    '% APR <span class="u">' +
+    fmtLoopRateSummary(supplyNow) +
+    '</span></div><div class="fg" style="margin-top:10px;text-align:left" onclick="event.stopPropagation()"><label>Aktuelle Supply-Menge</label><input id="loop-cur-supply-' +
+    selLoop.id +
+    '" type="number" step="any" value="' +
+    es(selLoop.currentcollateralamount || selLoop.currentCollateralAmount || selLoop.endcollateralamount || selLoop.endCollateralAmount || selLoop.startcollateralamount || selLoop.startCollateralAmount || '') +
+    '"></div></div><div style="background:var(--r-bg);padding:12px;border-radius:8px;border:1px solid var(--r);text-align:center"><div style="font-size:10px;color:var(--r);text-transform:uppercase">Borrow</div><div style="font-size:15px;font-weight:600;color:var(--t);margin-top:4px">' +
+    fn(postLoopBorrowAmount) +
     ' ' +
     es(selLoop.borrowtoken || '') +
     '</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Wert: ' +
-    fn(selTot.borrowUsd) +
+    fn(postLoopBorrowUsd) +
     ' USDC</div><div style="font-size:12px;font-weight:600;color:' +
     (selTot.borrowRateApr > 0 ? 'var(--r)' : 'var(--t2)') +
     ';margin-top:8px;text-align:center">' +
     (selTot.borrowRateApr > 0 ? '-' : '') +
     selTot.borrowRateApr.toFixed(2) +
-    '% APR</div></div></div>';
-  if (selPeg) h += '<div style="margin-top:18px">' + renderPegSummary(selPeg) + '</div>';
+    '% APR <span class="u">' +
+    fmtLoopRateSummary(borrowNow) +
+    '</span></div><div class="fg" style="margin-top:10px;text-align:left" onclick="event.stopPropagation()"><label>Aktuelle Borrow-Menge</label><input id="loop-cur-borrow-' +
+    selLoop.id +
+    '" type="number" step="any" value="' +
+    es(selLoop.currentborrowedamount || selLoop.currentBorrowedAmount || selLoop.endborrowedamount || selLoop.endBorrowedAmount || selLoop.borrowedamount || selLoop.borrowedAmount || '') +
+    '"></div></div></div><div style="display:flex;justify-content:flex-end;margin-top:10px"><button class="bt by bs" onclick="event.stopPropagation();saveLoopCurrentAmounts(\'' +
+    selLoop.id +
+    '\')">Aktuelle Mengen speichern</button></div>';
+  h += '<div style="margin-top:18px">' + (renderPegSummary(selPeg) || '<div class="peg-box"><div class="peg-grid"><div class="peg-cell"><span class="peg-label">Peg Einstieg</span><span class="peg-value">—</span></div><div class="peg-cell"><span class="peg-label">Aktueller Peg</span><span class="peg-value">—</span></div><div class="peg-cell"><span class="peg-label">Delta</span><span class="peg-value">—</span></div></div><div style="margin-top:8px;font-size:11px;color:var(--t4)">Noch kein Peg-Einstieg gesetzt. Du kannst ihn im Bearbeiten-Dialog manuell eintragen.</div></div>') + '</div>';
   if (selLoop.notes)
     h += '<div class="ibx" style="margin-top:18px"><div class="sh" style="margin:0 0 10px"><h3 class="st">Notiz</h3></div><div class="loop-note">' + es(selLoop.notes) + '</div></div>';
   h +=
@@ -1972,7 +2108,36 @@ function hLoopUpd() {
       }
       loadLoops();
     })
-    .catch(() => {});
+    .catch((err) => console.warn('Request fehlgeschlagen:', err.message || err));
+}
+function saveLoopCurrentAmounts(id) {
+  var loop = LO.find(function (x) {
+    return x.id === id;
+  });
+  if (!loop) return;
+  var supplyId = 'loop-cur-supply-' + id,
+    borrowId = 'loop-cur-borrow-' + id,
+    supplyValue = parseFloat(document.getElementById(supplyId)?.value),
+    borrowValue = parseFloat(document.getElementById(borrowId)?.value);
+  if (!Number.isFinite(supplyValue) || !(supplyValue > 0)) {
+    return showFieldError(supplyId, 'Aktuelle Supply-Menge erforderlich');
+  }
+  if (!Number.isFinite(borrowValue) || borrowValue < 0) {
+    return showFieldError(borrowId, 'Aktuelle Borrow-Menge erforderlich');
+  }
+  api('/api/loops/' + id, {
+    method: 'PUT',
+    body: JSON.stringify({
+      currentCollateralAmount: supplyValue,
+      currentBorrowedAmount: borrowValue,
+    }),
+  }).then(function (r) {
+    if (r.status !== 200) {
+      alert((r.data && r.data.error) || 'Loop konnte nicht gespeichert werden.');
+      return;
+    }
+    loadLoops();
+  }).catch((err) => console.warn('Request fehlgeschlagen:', err.message || err));
 }
 function closeLoop(id) {
   var l = LO.find(function (x) {
@@ -2026,7 +2191,7 @@ function renderLoopModal(le, isEdit) {
   var pegPreview =
     renderPegSummary(loopPegInfo(vCt, vPegRef, vPegEntry)) ||
     '<div class="hnt">Peg-Vergleich optional: Referenz-Token und Einstiegspreis setzen, um Markt-/Depeg-Deltas live zu sehen.</div>';
-  return `<div class="ov" onclick="cm();R()"><div class="mdl" style="max-width:620px" onclick="event.stopPropagation()"><div class="mdt">${isEdit ? "Loop bearbeiten" : "Neuen Loop erstellen"}</div><div style="background:var(--bg3);padding:12px;border-radius:8px;margin-bottom:16px;border:1px solid var(--bd)"><div style="font-size:11px;color:var(--t4);margin-bottom:6px">LOOP NAME (automatisch)</div><div style="font-size:16px;font-weight:600;color:var(--g)" id="f-ln-auto">${vCt && vBt ? es(vCt) + " / " + es(vBt) : "Supply Token / Borrow Token"}</div></div>${loopTokenDatalist()}<div class="fr"><div class="fg"><label>Start Datum (leer = jetzt)</label><input id="f-ld" type="date" value="${sd ? fds(sd) : ""}"></div><div class="fg"><label>Start Uhrzeit</label><input id="f-lt" type="time" value="${sd ? fts(sd) : ""}"></div></div><div class="fg"><label>Start Invest in USDC</label><input id="f-lcb" type="number" step="any" placeholder="1000" value="${vCb}" oninput="calcLoopData()"><div class="hnt">Hier gibst du das Kapital ein, mit dem du den Loop aufsetzt.</div></div><div style="background:var(--g-bg);border:1px solid rgba(0,255,163,0.22);border-radius:12px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--g);font-weight:600;margin-bottom:10px">📥 SUPPLY</div><div class="fr"><div class="fg"><label>Supply Token</label><input id="f-lct" list="loop-token-options" placeholder="ETH" value="${es(vCt)}" oninput="updateLoopName();calcLoopData()" onchange="fetchLoopOracleDefaults('supply')"></div><div class="fg"><label id="f-lsa-lbl">${es(loopRateLabel("supply", vCt))}</label><input id="f-lsa" type="number" step="0.01" placeholder="8.5" value="${vSa}" oninput="calcLoopData()"></div></div><div class="fr" style="margin-top:10px"><div class="fg"><label>Start Tokenmenge</label><input id="f-lcsm" type="number" step="any" placeholder="0.42" value="${vCsm}" oninput="calcLoopData()"></div><div class="fg"><label>Tokenpreis beim Kauf</label><input id="f-lcp" type="number" step="any" value="${vCp}" oninput="calcLoopData()"></div></div></div><div style="background:var(--rb);border:1px solid var(--r);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--r);font-weight:600;margin-bottom:10px">📤 BORROW</div><div class="fr"><div class="fg"><label>Borrow Token</label><input id="f-lbt" list="loop-token-options" placeholder="USDC" value="${es(vBt)}" oninput="updateLoopName();calcLoopData()" onchange="fetchLoopOracleDefaults('borrow')"></div><div class="fg"><label id="f-lba-lbl">${es(loopRateLabel("borrow", vBt))}</label><input id="f-lba" type="number" step="0.01" placeholder="3.5" value="${vBa}" oninput="calcLoopData()"></div></div><div class="fr" style="margin-top:10px"><div class="fg"><label>Aktuelle Collateral-Menge</label><input id="f-lce" type="number" step="any" placeholder="optional" value="${vCe}" oninput="calcLoopData()"></div><div class="fg"><label>Aktuelle Borrow-Menge</label><input id="f-lbe" type="number" step="any" placeholder="optional" value="${vBe}" oninput="calcLoopData()"></div></div></div><div style="background:var(--pb);border:1px solid var(--p);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--p);font-weight:600;margin-bottom:10px">PEG / DEPEG</div><div class="fr"><div class="fg"><label>Peg Referenz-Token</label><input id="f-lpr" list="loop-token-options" placeholder="AVAX" value="${es(vPegRef)}" oninput="calcLoopData()"></div><div class="fg"><label>Depeg Einstieg (1 ${es(vCt || "Asset")} = x Referenz)</label><input id="f-lpe" type="number" step="any" placeholder="1.25" value="${vPegEntry}" oninput="calcLoopData()"></div></div><div id="f-lpeg-preview">${pegPreview}</div></div><div class="fg"><label>Notiz</label><textarea id="f-lno" rows="3" placeholder="Warum wurde der Loop eröffnet? Worauf achtest du?">${es(vNotes)}</textarea></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="${isEdit ? "hLoopUpd()" : "hLoopCr()"}">${isEdit ? "Speichern" : "Erstellen"}</button></div></div></div>`;
+  return `<div class="ov" onclick="cm();R()"><div class="mdl" style="max-width:620px" onclick="event.stopPropagation()"><div class="mdt">${isEdit ? "Loop bearbeiten" : "Neuen Loop erstellen"}</div><div style="background:var(--bg3);padding:12px;border-radius:8px;margin-bottom:16px;border:1px solid var(--bd)"><div style="font-size:11px;color:var(--t4);margin-bottom:6px">LOOP NAME (automatisch)</div><div style="font-size:16px;font-weight:600;color:var(--g)" id="f-ln-auto">${vCt && vBt ? es(vCt) + " / " + es(vBt) : "Supply Token / Borrow Token"}</div></div>${loopTokenDatalist()}<div class="fr"><div class="fg"><label>Start Datum (leer = jetzt)</label><input id="f-ld" type="date" value="${sd ? fds(sd) : ""}"></div><div class="fg"><label>Start Uhrzeit</label><input id="f-lt" type="time" value="${sd ? fts(sd) : ""}"></div></div><div class="fg"><label>Start Invest in USDC</label><input id="f-lcb" type="number" step="any" placeholder="1000" value="${vCb}" oninput="calcLoopData()"><div class="hnt">Hier gibst du das Kapital ein, mit dem du den Loop aufsetzt.</div></div><div style="background:var(--g-bg);border:1px solid rgba(0,255,163,0.22);border-radius:12px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--g);font-weight:600;margin-bottom:10px">📥 SUPPLY</div><div class="fr"><div class="fg"><label>Supply Token</label><input id="f-lct" list="loop-token-options" placeholder="ETH" value="${es(vCt)}" oninput="updateLoopName();calcLoopData()" onchange="fetchLoopOracleDefaults('supply')"></div><div class="fg"><label id="f-lsa-lbl">${es(loopRateLabel("supply", vCt))}</label><input id="f-lsa" type="number" step="0.01" placeholder="8.5" value="${vSa}" oninput="calcLoopData()"></div></div><div class="fr" style="margin-top:10px"><div class="fg"><label>Start Tokenmenge</label><input id="f-lcsm" type="number" step="any" placeholder="0.42" value="${vCsm}" oninput="calcLoopData()"></div><div class="fg"><label>Tokenpreis beim Kauf</label><input id="f-lcp" type="number" step="any" value="${vCp}" oninput="calcLoopData()"></div></div></div><div style="background:var(--rb);border:1px solid var(--r);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--r);font-weight:600;margin-bottom:10px">📤 BORROW</div><div class="fr"><div class="fg"><label>Borrow Token</label><input id="f-lbt" list="loop-token-options" placeholder="USDC" value="${es(vBt)}" oninput="updateLoopName();calcLoopData()" onchange="fetchLoopOracleDefaults('borrow')"></div><div class="fg"><label id="f-lba-lbl">${es(loopRateLabel("borrow", vBt))}</label><input id="f-lba" type="number" step="0.01" placeholder="3.5" value="${vBa}" oninput="calcLoopData()"></div></div></div><div style="background:rgba(255,214,102,0.08);border:1px solid rgba(255,214,102,0.28);border-radius:12px;padding:12px;margin:16px 0"><div style="font-size:11px;color:#ffd666;font-weight:600;margin-bottom:10px">🟨 Aktuelle Mengen</div><div class="fr"><div class="fg"><label>Collateral Menge gelooped</label><input id="f-lce" type="number" step="any" placeholder="optional" value="${vCe}" oninput="calcLoopData()"></div><div class="fg"><label>Borrow Menge gelooped</label><input id="f-lbe" type="number" step="any" placeholder="optional" value="${vBe}" oninput="calcLoopData()"></div></div></div><div style="background:var(--pb);border:1px solid var(--p);border-radius:8px;padding:12px;margin:16px 0"><div style="font-size:11px;color:var(--p);font-weight:600;margin-bottom:10px">PEG / DEPEG</div><div class="fr"><div class="fg"><label>Peg Referenz-Token</label><input id="f-lpr" list="loop-token-options" placeholder="AVAX" value="${es(vPegRef)}" oninput="calcLoopData()"></div><div class="fg"><label>Depeg Einstieg (1 ${es(vCt || "Asset")} = x Referenz)</label><input id="f-lpe" type="number" step="any" placeholder="1.25" value="${vPegEntry}" oninput="calcLoopData()"></div></div><div id="f-lpeg-preview">${pegPreview}</div></div><div class="fg"><label>Notiz</label><textarea id="f-lno" rows="3" placeholder="Warum wurde der Loop eröffnet? Worauf achtest du?">${es(vNotes)}</textarea></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="${isEdit ? "hLoopUpd()" : "hLoopCr()"}">${isEdit ? "Speichern" : "Erstellen"}</button></div></div></div>`;
 }
 function hFeature() {
   let t = document.getElementById("f-title").value,
@@ -2221,6 +2386,12 @@ function frfClosePos(id) {
   M.fclose = { id: id };
   R();
 }
+function frfToggleCloseFunding(id, nextValue) {
+  F("/api/frf/positions/" + id, {
+    method: "PUT",
+    body: JSON.stringify({ closePnlIncludesFunding: !!nextValue }),
+  }).then(loadData);
+}
 function frfTogPos(id) {
   F("/api/frf/positions/" + id + "/toggle", { method: "PUT" }).then(loadData);
 }
@@ -2276,15 +2447,216 @@ function linkedTargetPayload(selectId) {
     linkedLoopId: value.indexOf("loop:") === 0 ? value.slice(5) : "",
   };
 }
+var CUSTOM_EXCHANGE_PRESET = "__custom__";
+var CURATED_EXCHANGE_PRESETS = [
+  { value: "bybit", label: "Bybit", aliases: ["bybit"] },
+  { value: "phemex", label: "Phemex", aliases: ["phemex"] },
+  {
+    value: "hyperliquid",
+    label: "Hyperliquid",
+    aliases: ["hyperliquid"],
+  },
+  {
+    value: "variational",
+    label: "Variational",
+    aliases: ["variational"],
+  },
+  { value: "extended", label: "Extended", aliases: ["extended", "extendet"] },
+  { value: "grvt", label: "GRVT", aliases: ["grvt", "grvt.io"] },
+];
+function matchesExchangeAlias(value, alias) {
+  return (
+    value === alias ||
+    value.indexOf(alias + " ") === 0 ||
+    value.indexOf(alias + "-") === 0 ||
+    value.indexOf(alias + "_") === 0
+  );
+}
+function findCuratedExchangePreset(name) {
+  var value = String(name || "").trim().toLowerCase();
+  if (!value) return null;
+  for (var i = 0; i < CURATED_EXCHANGE_PRESETS.length; i++) {
+    var preset = CURATED_EXCHANGE_PRESETS[i];
+    for (var j = 0; j < preset.aliases.length; j++) {
+      if (matchesExchangeAlias(value, preset.aliases[j])) return preset;
+    }
+  }
+  return null;
+}
+function exchangePresetValueForName(name) {
+  var preset = findCuratedExchangePreset(name);
+  return preset ? preset.value : CUSTOM_EXCHANGE_PRESET;
+}
+function resolveExchangeFormName(rawName, presetValue) {
+  var preset = CURATED_EXCHANGE_PRESETS.find(function (item) {
+    return item.value === presetValue;
+  });
+  if (preset) return preset.label;
+  return String(rawName || "").trim();
+}
+function frfResolveExchangeSelection(exchanges, rawValue, side) {
+  var value = String(rawValue || "").trim();
+  if (!value) return null;
+  if (side === "long" && value.toLowerCase() === "spot") {
+    return { id: "_spot", label: "Spot" };
+  }
+  var normalized = value.toLowerCase();
+  var match = (Array.isArray(exchanges) ? exchanges : []).find(function (exchange) {
+    var label = normExchangeLabel(exchange && exchange.name).toLowerCase();
+    var raw = String((exchange && exchange.name) || "").trim().toLowerCase();
+    return label === normalized || raw === normalized;
+  });
+  return match
+    ? { id: match.id, label: normExchangeLabel(match.name) }
+    : null;
+}
+function frfFilterExchangeOptions(exchanges, query, side) {
+  var items = [];
+  if (side === "long") items.push({ id: "_spot", label: "Spot" });
+  var seen = new Set();
+  (Array.isArray(exchanges) ? exchanges : []).forEach(function (exchange) {
+    var label = normExchangeLabel(exchange && exchange.name);
+    if (!label || seen.has(label.toLowerCase())) return;
+    seen.add(label.toLowerCase());
+    items.push({ id: exchange.id, label: label });
+  });
+  var normalizedQuery = String(query || "").trim().toLowerCase();
+  if (!normalizedQuery) return items;
+  return items.filter(function (item) {
+    return String(item.label || "").toLowerCase().indexOf(normalizedQuery) !== -1;
+  });
+}
+function exchangePresetOptionsHtml(selectedName) {
+  var selectedValue = exchangePresetValueForName(selectedName);
+  var opts = CURATED_EXCHANGE_PRESETS.map(function (preset) {
+    return (
+      '<option value="' +
+      preset.value +
+      '"' +
+      (selectedValue === preset.value ? " selected" : "") +
+      ">" +
+      preset.label +
+      "</option>"
+    );
+  });
+  opts.push(
+    '<option value="' +
+      CUSTOM_EXCHANGE_PRESET +
+      '"' +
+      (selectedValue === CUSTOM_EXCHANGE_PRESET ? " selected" : "") +
+      ">Eigene Börse...</option>",
+  );
+  return opts.join("");
+}
+function exchangePresetFieldIds(mode) {
+  return mode === "edit"
+    ? { preset: "f-eexp", name: "f-eexn" }
+    : { preset: "f-exp", name: "f-exn" };
+}
+function syncExchangePreset(mode) {
+  var ids = exchangePresetFieldIds(mode),
+    preset = document.getElementById(ids.preset),
+    input = document.getElementById(ids.name);
+  if (!preset || !input) return;
+  if (preset.value === CUSTOM_EXCHANGE_PRESET) {
+    input.readOnly = false;
+    input.placeholder = "z.B. Kraken";
+    return;
+  }
+  input.value = resolveExchangeFormName(input.value, preset.value);
+  input.readOnly = true;
+  input.placeholder = "Name aus Auswahl";
+}
+function frfExchangeFieldIds(mode, side) {
+  if (mode === "edit" && side === "short") {
+    return { input: "f-esex", hidden: "f-epsh", box: "f-esex-sug" };
+  }
+  if (mode === "edit" && side === "long") {
+    return { input: "f-elex", hidden: "f-eplg", box: "f-elex-sug" };
+  }
+  if (side === "short") {
+    return { input: "f-psex", hidden: "f-psh", box: "f-psex-sug" };
+  }
+  return { input: "f-plex", hidden: "f-plg", box: "f-plex-sug" };
+}
+function frfExchangeChoice(mode, side) {
+  var ids = frfExchangeFieldIds(mode, side),
+    input = document.getElementById(ids.input),
+    hidden = document.getElementById(ids.hidden);
+  var display = input && input.value ? input.value.trim() : "";
+  var resolved = frfResolveExchangeSelection(FR.exchanges, display, side);
+  return {
+    display: display,
+    exchangeId: hidden && hidden.value ? hidden.value : resolved ? resolved.id : "",
+    label: resolved ? resolved.label : display,
+  };
+}
+function frfRenderExchangeSuggestions(mode, side, html) {
+  var ids = frfExchangeFieldIds(mode, side),
+    box = document.getElementById(ids.box);
+  if (box) box.innerHTML = html || "";
+}
+function frfExchangeSelect(mode, side, exchangeId, label) {
+  var ids = frfExchangeFieldIds(mode, side),
+    input = document.getElementById(ids.input),
+    hidden = document.getElementById(ids.hidden);
+  if (input) input.value = label || "";
+  if (hidden) hidden.value = exchangeId || "";
+  frfRenderExchangeSuggestions(mode, side, "");
+  frfTokenReset(mode, side);
+  frfTokenSuggest(mode, side);
+}
+function frfExchangeSuggestSection(mode, side, items) {
+  if (!items.length) return '<div class="tok-suggest-empty">Keine passenden Börsen gefunden.</div>';
+  return (
+    '<div class="tok-suggest-panel"><div class="tok-suggest-scroll"><div class="tok-suggest-section"><div class="tok-suggest-meta">Verfügbare Börsen</div><div class="tok-suggest-list">' +
+    items
+      .map(function (item) {
+        return (
+          '<button type="button" class="tok-suggest-item" onclick="frfExchangeSelect(\'' +
+          mode +
+          '\',\'' +
+          side +
+          '\',\'' +
+          es(item.id || "") +
+          '\',\'' +
+          es(item.label || "") +
+          '\')"><span>' +
+          es(item.label || "") +
+          '</span><small>' +
+          (item.id === "_spot" ? "Spot ohne Hebel" : "Vorhandene Börse verwenden") +
+          '</small></button>'
+        );
+      })
+      .join("") +
+    "</div></div></div></div>"
+  );
+}
+function frfExchangeSuggest(mode, side, forceAll) {
+  var ids = frfExchangeFieldIds(mode, side),
+    input = document.getElementById(ids.input),
+    hidden = document.getElementById(ids.hidden),
+    query = forceAll ? "" : input && input.value ? input.value.trim() : "";
+  if (!input || !hidden) return;
+  var resolved = frfResolveExchangeSelection(FR.exchanges, query, side);
+  hidden.value = resolved ? resolved.id : "";
+  frfRenderExchangeSuggestions(
+    mode,
+    side,
+    frfExchangeSuggestSection(mode, side, frfFilterExchangeOptions(FR.exchanges, query, side)),
+  );
+}
+function frfCloseExchangeSuggestions() {
+  frfRenderExchangeSuggestions("new", "short", "");
+  frfRenderExchangeSuggestions("new", "long", "");
+  frfRenderExchangeSuggestions("edit", "short", "");
+  frfRenderExchangeSuggestions("edit", "long", "");
+}
 function normExchangeLabel(name) {
   var v = String(name || "").trim();
   if (!v) return "";
-  var low = v.toLowerCase();
-  if (low === "extendet" || low === "extended") return "Extended";
-  if (low === "bybit") return "Bybit";
-  if (low === "phemex") return "Phemex";
-  if (low === "variational") return "Variational";
-  if (low === "hyperliquid") return "Hyperliquid";
+  var preset = findCuratedExchangePreset(v);
+  if (preset) return preset.label;
   return v;
 }
 function frfTokenFieldIds(mode, side) {
@@ -2835,7 +3207,10 @@ function hEi() {
 }
 
 function hFex() {
-  var n = document.getElementById("f-exn").value.trim(),
+  var n = resolveExchangeFormName(
+      document.getElementById("f-exn").value,
+      (document.getElementById("f-exp") || {}).value || CUSTOM_EXCHANGE_PRESET,
+    ),
     m = parseFloat(document.getElementById("f-exm").value) || 0;
   if (!validateFields([
     { id: 'f-exn', test: function(v){ return v.trim().length > 0; }, msg: 'Name ist erforderlich' }
@@ -2847,12 +3222,16 @@ function hFex() {
   }).then(loadData);
 }
 function hFeex() {
-  var o = M.feex;
+  var o = M.feex,
+    n = resolveExchangeFormName(
+      document.getElementById("f-eexn").value,
+      (document.getElementById("f-eexp") || {}).value || CUSTOM_EXCHANGE_PRESET,
+    );
   cm();
   F("/api/frf/exchanges/" + o.id, {
     method: "PUT",
     body: JSON.stringify({
-      name: document.getElementById("f-eexn").value.trim(),
+      name: n,
       margin: parseFloat(document.getElementById("f-eexm").value),
     }),
   }).then(loadData);
@@ -2889,9 +3268,17 @@ function hFemm() {
   }).then(loadData);
 }
 function hFpos() {
-  var lg = document.getElementById("f-plg").value,
+  var shortExchange = frfExchangeChoice("new", "short"),
+    longExchange = frfExchangeChoice("new", "long"),
+    lg = longExchange.exchangeId,
     shortChoice = frfTokenChoice("new", "short"),
     longChoice = frfTokenChoice("new", "long");
+  if (!shortExchange.exchangeId) {
+    return showFieldError("f-psex", "Short-Börse eingeben oder auswählen");
+  }
+  if (!longExchange.exchangeId) {
+    return showFieldError("f-plex", "Long-Börse eingeben oder auswählen");
+  }
   // Fallback: wenn kein Suggestion-Klick erfolgte aber der User Text eingetippt hat,
   // werden display-Wert als asset/market genutzt (direkte Eingabe ohne Autocomplete).
   if (!shortChoice.asset && shortChoice.display) {
@@ -2942,7 +3329,7 @@ function hFpos() {
       positionSizeUsd: 0,
       entryPriceShort: parseFloat(document.getElementById("f-ptes").value) || 0,
       entryPriceLong: parseFloat(document.getElementById("f-ptel").value) || 0,
-      shortExchangeId: document.getElementById("f-psh").value,
+      shortExchangeId: shortExchange.exchangeId,
       longExchangeId: lg === "_spot" ? "" : lg,
       longIsSpot: lg === "_spot",
       fees: parseFloat(document.getElementById("f-pfe").value) || 0,
@@ -2957,9 +3344,17 @@ function hFepos() {
   var fp = FR.positions.find((x) => x.id === o.id);
   if (!fp) return;
   var tp = document.getElementById("f-eptype").value;
-  var lg = document.getElementById("f-eplg").value;
-  var shortChoice = frfTokenChoice("edit", "short"),
+  var shortExchange = frfExchangeChoice("edit", "short"),
+    longExchange = frfExchangeChoice("edit", "long"),
+    lg = longExchange.exchangeId,
+    shortChoice = frfTokenChoice("edit", "short"),
     longChoice = frfTokenChoice("edit", "long");
+  if (!shortExchange.exchangeId) {
+    return showFieldError("f-esex", "Short-Börse eingeben oder auswählen");
+  }
+  if (!longExchange.exchangeId) {
+    return showFieldError("f-elex", "Long-Börse eingeben oder auswählen");
+  }
   // Fallback: direkte Eingabe ohne Autocomplete-Auswahl
   if (!shortChoice.asset && shortChoice.display) {
     shortChoice.asset = shortChoice.display.toUpperCase();
@@ -3002,7 +3397,7 @@ function hFepos() {
       positionSizeUsd: parseFloat(document.getElementById("f-epts").value) || 0,
       entryPriceShort: parseFloat(document.getElementById("f-eptes").value),
       entryPriceLong: parseFloat(document.getElementById("f-eptel").value),
-      shortExchangeId: document.getElementById("f-epsh").value,
+      shortExchangeId: shortExchange.exchangeId,
       longExchangeId: lg === "_spot" ? "" : lg,
       longIsSpot: lg === "_spot",
       fees: parseFloat(document.getElementById("f-epfe").value) || 0,
@@ -3059,7 +3454,7 @@ function hFefund() {
       }
       loadData();
     })
-    .catch(() => {});
+    .catch((err) => console.warn('Request fehlgeschlagen:', err.message || err));
 }
 function hFclose() {
   var o = M.fclose;
@@ -3069,6 +3464,7 @@ function hFclose() {
     body: JSON.stringify({
       closePnlShort: parseFloat(document.getElementById("f-fcs").value) || 0,
       closePnlLong: parseFloat(document.getElementById("f-fcl").value) || 0,
+      closePnlIncludesFunding: !!(document.getElementById("f-fci") && document.getElementById("f-fci").checked),
       fees: parseFloat(document.getElementById("f-fcf").value) || 0,
       closeNote: document.getElementById("f-fcn").value || "",
     }),
@@ -3382,7 +3778,7 @@ function msgSave(status) {
       );
       loadMessages();
     })
-    .catch(function () {});
+    .catch(function (err) { console.warn('Request fehlgeschlagen:', err.message || err); });
 }
 function msgDelete(id) {
   if (!confirm("Nachricht/Entwurf wirklich entfernen?")) return;
@@ -3397,7 +3793,7 @@ function msgDelete(id) {
       if (MC.id === id) msgResetCompose("all");
       loadMessages();
     })
-    .catch(function () {});
+    .catch(function (err) { console.warn('Request fehlgeschlagen:', err.message || err); });
 }
 function msgOpenThread(id) {
   MSG.selectedId = id;
@@ -3418,14 +3814,14 @@ function msgOpenThread(id) {
     .then(function () {
       loadMessages();
     })
-    .catch(function () {});
+    .catch(function (err) { console.warn('Request fehlgeschlagen:', err.message || err); });
 }
 function msgMarkAllRead() {
   api("/api/messages/read-all", { method: "POST" })
     .then(function () {
       loadMessages();
     })
-    .catch(function () {});
+    .catch(function (err) { console.warn('Request fehlgeschlagen:', err.message || err); });
 }
 function msgReplyOpen() {
   var th = msgSelectedThread();
@@ -3483,7 +3879,7 @@ function hMsgReply() {
       cm();
       loadMessages();
     })
-    .catch(function () {});
+    .catch(function (err) { console.warn('Request fehlgeschlagen:', err.message || err); });
 }
 function msgSelectAdmin(id) {
   MSG.selectedAdminId = id;
@@ -3534,7 +3930,7 @@ function loadMessages() {
       }
       R();
     })
-    .catch(function () {});
+    .catch(function (err) { console.warn('Request fehlgeschlagen:', err.message || err); });
 }
 function openMessages(tab) {
   MSG_VIEW = tab || (canManageMessages() ? "admin" : "inbox");
@@ -3841,7 +4237,7 @@ function renderMessagesView() {
             " • " +
             (u.directUnreadCount || 0) +
             ' ungelesen</em></div><div class="msg-actions"><button class="bt bb bs" onclick="event.stopPropagation();msgComposeUser(\'' +
-            u.id +
+            es(u.id) +
             "','" +
             es(u.email) +
             "')\">Nachricht</button></div></div>"
@@ -4021,11 +4417,6 @@ function renderGlobalBackground() {
     );
   }
 
-  if (existingBg) {
-    if (existingBg.getAttribute("data-real") === "true" && !hasData) return;
-    existingBg.remove();
-  }
-
   var items = [];
   (S || []).forEach(function (s) {
     items.push({
@@ -4071,6 +4462,17 @@ function renderGlobalBackground() {
     return null;
   }
 
+  var signature = JSON.stringify({
+    real: isReal,
+    items: items.map(function (item) {
+      return [item.name, item.val, item.status];
+    }),
+  });
+
+  if (existingBg && BG_SIGNATURE === signature) return;
+
+  if (existingBg) existingBg.remove();
+
   var pathPoints = [
       { x: 80, y: 380 },
       { x: 180, y: 290 },
@@ -4091,15 +4493,12 @@ function renderGlobalBackground() {
     nodesHtml = "",
     displayItems = items.slice();
 
-  if (displayItems.length > 15)
-    displayItems = displayItems.sort(function () {
-      return 0.5 - Math.random();
-    }).slice(0, 15);
+  if (displayItems.length > 15) displayItems = displayItems.slice(0, 15);
 
   displayItems.forEach(function (item, i) {
     var idx = Math.floor((i / displayItems.length) * pathPoints.length),
       pt = pathPoints[idx] || pathPoints[0],
-      dur = 3 + (i % 4) + Math.random(),
+      dur = 3 + (i % 4) + i * 0.12,
       isEnded = item.status === "Beendet" || item.status === "closed",
       color = isEnded ? "#5a5a5a" : "#00ffa3",
       logo = getL(item.name),
@@ -4170,6 +4569,7 @@ function renderGlobalBackground() {
       segment +
       '</g></g></svg></div>';
 
+  BG_SIGNATURE = signature;
   document.body.insertAdjacentHTML("afterbegin", bgHtml);
 }
 
@@ -4216,17 +4616,17 @@ function R(options) {
       rw = tr(s),
       incl = stratIncl(s);
     var tgl = `<span style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--t4)" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" ${incl ? "checked" : ""} onchange="togStratApr('${s.id}')"><span class="sl2"></span></label></span>`;
-    if (VW === "list") {
-      var hl = `<div class="lt-row${incl ? "" : " pia"}" style="column-gap:16px" onclick="SI='${s.id}';V='detail';R()"><span class="lt-name">${es(s.name)}${tk}</span><span class="lt-val">${fn(c)}</span><span class="lt-val ${rw > 0 ? "g" : rw < 0 ? "r" : ""}">${rw > 0 ? "+" : ""}${fn(rw)}</span><span class="lt-val ${pv >= 0 ? "g" : "r"}">${pv !== 0 ? (pv >= 0 ? "+" : "") + fn(pv) : "-"}</span><span class="lt-val" style="padding-right:16px">${d.toFixed(1)} T</span>`;
-      hl += `<span class="lt-apr${a > 0 ? "" : a < 0 ? " mt" : " z"}">${a.toFixed(2)}%</span>`;
-      hl += `<span class="lt-act">${tgl}`;
-      if (!isP)
-        hl += `<button class="bt be" onclick="event.stopPropagation();endS('${s.id}')">End</button>`;
-      else
-        hl += `<button class="bt bb" onclick="event.stopPropagation();reaS('${s.id}')">↩</button><button class="bt be" onclick="event.stopPropagation();delS('${s.id}')">X</button>`;
-      hl += "</span></div>";
-      return hl;
-    }
+      if (VW === "list") {
+        var hl = `<div class="lt-row${incl ? "" : " pia"}" style="column-gap:16px" onclick="SI='${s.id}';V='detail';R()"><span class="lt-name">${es(s.name)}${tk}</span><span class="lt-val">${fn(c)}</span><span class="lt-val ${rw > 0 ? "g" : rw < 0 ? "r" : ""}">${rw > 0 ? "+" : ""}${fn(rw)}</span><span class="lt-val ${pv >= 0 ? "g" : "r"}">${pv !== 0 ? (pv >= 0 ? "+" : "") + fn(pv) : "-"}</span><span class="lt-val" style="padding-right:16px">${d.toFixed(1)} T</span>`;
+        hl += `<span class="lt-apr${a > 0 ? "" : a < 0 ? " mt" : " z"}">${a.toFixed(2)}%</span>`;
+        hl += `<span class="lt-act">${tgl}`;
+        if (!isP)
+          hl += `<button class="bt be" onclick="event.stopPropagation();endS('${s.id}')">End</button>`;
+        else
+          hl += `<button class="bt be" onclick="event.stopPropagation();delS('${s.id}')">X</button>`;
+        hl += "</span></div>";
+        return hl;
+      }
     var hc = `<div class="cd${incl ? "" : " pia"}" onclick="SI='${s.id}';V='detail';R()"><div class="cdh"><h3 class="cdn">${es(s.name)}${tk}</h3><span class="cda${a > 0 ? "" : a < 0 ? " mt" : " z"}">${a.toFixed(2)}%</span></div><div class="cdb">`;
     hc += `<div class="cdr"><span class="cdl">Investment</span><span class="cdv">${fn(c)}</span></div>`;
     hc += `<div class="cdr"><span class="cdl">Rewards</span><span class="cdv ${rw > 0 ? "g" : rw < 0 ? "r" : ""}">${rw > 0 ? "+" : ""}${fn(rw)}</span></div>`;
@@ -4240,7 +4640,7 @@ function R(options) {
     if (!isP)
       hc += `<button class="bt be" onclick="event.stopPropagation();endS('${s.id}')">Beenden</button>`;
     else
-      hc += `<button class="bt bb" onclick="event.stopPropagation();reaS('${s.id}')">Reaktivieren</button><button class="bt be" onclick="event.stopPropagation();delS('${s.id}')">Löschen</button>`;
+      hc += `<button class="bt be" onclick="event.stopPropagation();delS('${s.id}')">Löschen</button>`;
     hc += `<span style="font-size:11px;color:var(--t5)">→</span></div></div></div>`;
     return hc;
   }
@@ -4468,7 +4868,7 @@ function R(options) {
             '</span><span style="flex:1;font-size:12px;color:var(--t4)">' +
             roleBadge(a.role) +
             '</span><span style="width:84px;text-align:right"><button class="bt bb bs" onclick="event.stopPropagation();msgComposeUser(\'' +
-            a.id +
+            es(a.id) +
             "','" +
             es(a.email) +
             "')\">Nachricht</button></span></div>";
@@ -4670,7 +5070,13 @@ function R(options) {
         (se.endedAt ? "en" : "ac") +
         '">' +
         (se.endedAt ? "Beendet" : "Aktiv") +
-        "</span>";
+        '</span>' +
+        (se.endedAt
+          ? '<button class="bt bb bs" style="margin-left:8px" onclick="reaS(\'' +
+            se.id +
+            '\')">Reaktivieren</button>'
+          : '') +
+        "";
       var linkedPos = FR.positions.filter(function (p) {
         return p.linkedStrategyId === se.id;
       });
@@ -5016,10 +5422,6 @@ function R(options) {
           "')\">Beenden</button>";
       if (se.endedAt) {
         h +=
-          '<button class="bt bb" style="padding:10px 22px;font-size:13px" onclick="reaS(\'' +
-          se.id +
-          "')\">Reaktivieren</button>";
-        h +=
           '<button class="bt by" style="padding:10px 22px;font-size:13px" onclick="M.ed=1;R()">Enddatum</button>';
       }
       h += "</div>";
@@ -5118,7 +5520,13 @@ function R(options) {
           es(ex.name) +
           '</span><div style="display:flex;gap:6px"><button class="bt by bs" onclick="M.fexm={id:\'' +
           ex.id +
-          '\'};R()">+ Margin</button><button class="bt bed" onclick="M.feex={id:\'' +
+          '\'};R()">+ Margin</button>' +
+          (ex.marginHistory.length > 1
+            ? '<button class="bt bcn bs" title="Margin-Historie" onclick="tgl(\'' +
+              ek +
+              '\')">▾</button>'
+            : '') +
+          '<button class="bt bed" onclick="M.feex={id:\'' +
           ex.id +
           "',name:'" +
           es(ex.name) +
@@ -5139,15 +5547,9 @@ function R(options) {
           "</span></div></div>";
         if (ex.marginHistory.length > 1) {
           h +=
-            '<button class="col-btn' +
+            '<div class="col-ct' +
             (isO ? " open" : "") +
-            '" onclick="tgl(\'' +
-            ek +
-            '\')"><span class="arr">▼</span> ' +
-            ex.marginHistory.length +
-            ' Margin-Einträge</button><div class="col-ct' +
-            (isO ? " open" : "") +
-            '">';
+            '" style="margin-top:10px">';
           h +=
             '<div class="tbl" style="margin-top:8px"><div class="tblh"><span style="flex:1">Datum</span><span style="flex:1">Notiz</span><span style="flex:1;text-align:right">Betrag</span><span style="width:56px"></span></div>';
           ex.marginHistory
@@ -5227,7 +5629,7 @@ function R(options) {
         pgFRF.forEach(function (p) {
           var pnl = posPnl(p),
             d = db(p.startDate, p.endedAt || nw),
-            cap = posCapital(p),
+            cap = posAprCapital(p, FR.positions, FR.exchanges, p.endedAt || nw),
             a = calcApr(pnl - (p.fees || 0), cap, d),
             liveSize = posLiveSize(p),
             ty = p.type === "hedge" ? "Hedge" : "FRF";
@@ -5271,7 +5673,8 @@ function R(options) {
         var pnl = posPnl(fp),
           d = db(fp.startDate, fp.endedAt || nw),
           cap = posCapital(fp),
-          a = calcApr(pnl - fp.fees, cap, d),
+          aprCap = posAprCapital(fp, FR.positions, FR.exchanges, fp.endedAt || nw),
+          a = calcApr(pnl - fp.fees, aprCap, d),
           pr = PRICES[fp.token ? fp.token.toUpperCase() : ""],
           liveSize = posLiveSize(fp),
           rpnl = runningFunding(fp),
@@ -5518,7 +5921,14 @@ function R(options) {
             '">' +
             (fp.closePnlLong >= 0 ? "+" : "") +
             fn(fp.closePnlLong || 0) +
-            "</span></div></div></div>";
+            '</span></div><div class="iti"><span class="itl">Funding in Close PNL</span><span class="itv">' +
+            '<label class="sw" style="vertical-align:middle;margin-right:6px"><input type="checkbox" ' +
+            (fp.closePnlIncludesFunding ? 'checked' : '') +
+            ' onchange="frfToggleCloseFunding(\'' +
+            fp.id +
+            '\',this.checked)"><span class="sl2"></span></label>' +
+            (fp.closePnlIncludesFunding ? 'Aktiv' : 'Getrennt') +
+            '</span></div></div></div>';
         }
         var fsArr = fp.fundingShort || [],
           flArr = fp.fundingLong || [],
@@ -5725,31 +6135,29 @@ function R(options) {
             h += '<div class="emp">Keine aktiven Loops.</div>';
           else {
             h +=
-              '<div class="lt"><div class="lt-hdr" style="grid-template-columns:2fr 1fr 1fr 1fr 1fr 110px"><span>Name</span><span style="text-align:right">Collateral</span><span style="text-align:right">Borrow</span><span style="text-align:right">Hebel</span><span style="text-align:center">Gehebelte APR</span><span style="text-align:right">Start</span></div>';
+              '<div class="lt"><div class="lt-hdr" style="grid-template-columns:2fr 110px 90px 1fr 1fr"><span>Name</span><span style="text-align:right">Start</span><span style="text-align:right">Laufzeit</span><span style="text-align:right">Hebel</span><span style="text-align:center">APR</span></div>';
             activeCalc.forEach(function (entry) {
               var l = entry.loop,
                 tot = entry.totals;
               h +=
                 '<div class="lt-row loop-row' +
                 (LPI === l.id ? ' open' : '') +
-                '" style="grid-template-columns:2fr 1fr 1fr 1fr 1fr 110px" onclick="openLoopDetail(\'' +
+                '" style="grid-template-columns:2fr 110px 90px 1fr 1fr" onclick="openLoopDetail(\'' +
                 l.id +
                 '\')"><span class="lt-name">' +
                 es(l.name || 'Loop') +
                 '</span><span class="lt-val">' +
-                fn(tot.supplyUsd) +
+                new Date(l.startdate).toLocaleDateString('de-DE') +
                 '</span><span class="lt-val">' +
-                fn(tot.borrowUsd) +
-                '</span><span class="lt-val">' +
+                db(l.startdate, nw).toFixed(1) +
+                ' T</span><span class="lt-val">' +
                 tot.leverage.toFixed(2) +
                 'x</span><span class="lt-apr' +
                 (tot.netApr > 0 ? '' : tot.netApr < 0 ? ' mt' : ' z') +
                 '">' +
                 (tot.netApr > 0 ? '+' : '') +
                 tot.netApr.toFixed(2) +
-                '%</span><span class="lt-val">' +
-                fd(l.startdate) +
-                '</span></div>';
+                '%</span></div>';
               if (LPI === l.id) {
                 h +=
                   '<div style="margin:0 0 16px">' +
@@ -5927,7 +6335,7 @@ function R(options) {
     h +=
       '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Investment ändern</div><div class="hnt">Aktuell: ' +
       fn(ci(se)) +
-      '</div><div class="fg"><label>Neues Investment (USDC)</label><input id="f-ni" type="number" step="0.01"></div><div class="fg"><label>Notiz</label><input id="f-nin"></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hIv()">Aendern</button></div></div></div>';
+      '</div><div class="fg"><label>Investment hinzufügen / abziehen (USDC)</label><input id="f-ni" type="number" step="0.01"></div><div class="hnt">Positive Werte addieren zum Investment, negative Werte ziehen davon ab.</div><div class="fg"><label>Notiz</label><input id="f-nin"></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hIv()">Buchen</button></div></div></div>';
   }
   if (M.pl) {
     h +=
@@ -6077,13 +6485,21 @@ function R(options) {
 
   if (M.fex) {
     h +=
-      '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Börse hinzufügen</div><div class="fg"><label>Name</label><input id="f-exn" placeholder="z.B. Binance"></div><div class="fg"><label>Anfangs-Margin (USDC)</label><input id="f-exm" type="number" step="0.01" placeholder="0.00"></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hFex()">Erstellen</button></div></div></div>';
+      '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Börse hinzufügen</div><div class="fg"><label>Unsere Börsen</label><select id="f-exp" onchange="syncExchangePreset(\'new\')">' +
+      exchangePresetOptionsHtml('Bybit') +
+      '</select></div><div class="fg"><label>Name</label><input id="f-exn" value="Bybit" placeholder="Name aus Auswahl" readonly><div class="hnt">Wähle eine unterstützte Börse oder nutze "Eigene Börse..." für freie Eingabe.</div></div><div class="fg"><label>Anfangs-Margin (USDC)</label><input id="f-exm" type="number" step="0.01" placeholder="0.00"></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hFex()">Erstellen</button></div></div></div>';
   }
   if (M.feex) {
     h +=
-      '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Börse bearbeiten</div><div class="fg"><label>Name</label><input id="f-eexn" value="' +
-      es(M.feex.name) +
-      '"></div><div class="fg"><label>Aktuelle Margin (USDC)</label><input id="f-eexm" type="number" step="0.01" value="' +
+      '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Börse bearbeiten</div><div class="fg"><label>Unsere Börsen</label><select id="f-eexp" onchange="syncExchangePreset(\'edit\')">' +
+      exchangePresetOptionsHtml(M.feex.name) +
+      '</select></div><div class="fg"><label>Name</label><input id="f-eexn" value="' +
+      es(normExchangeLabel(M.feex.name)) +
+      '"' +
+      (exchangePresetValueForName(M.feex.name) === CUSTOM_EXCHANGE_PRESET ? '' : ' readonly') +
+      ' placeholder="' +
+      (exchangePresetValueForName(M.feex.name) === CUSTOM_EXCHANGE_PRESET ? 'z.B. Kraken' : 'Name aus Auswahl') +
+      '"><div class="hnt">Unterstützte Börsen werden vereinheitlicht angezeigt. Für Sonderfälle bleibt freie Eingabe möglich.</div></div><div class="fg"><label>Aktuelle Margin (USDC)</label><input id="f-eexm" type="number" step="0.01" value="' +
       (M.feex.margin || 0) +
       '"></div><p style="color:var(--t4);font-size:11px;margin:-2px 0 10px">Bei Änderung wird automatisch ein Korrektur-Eintrag in Margin-Historie angelegt.</p><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hFeex()">Speichern</button></div></div></div>';
   }
@@ -6105,77 +6521,38 @@ function R(options) {
       '"></div></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hFemm()">Speichern</button></div></div></div>';
   }
   if (M.fpos) {
-    var exOpts = FR.exchanges
-        .map(function (e) {
-          return (
-            '<option value="' +
-            e.id +
-            '">' +
-            es(normExchangeLabel(e.name)) +
-            "</option>"
-          );
-        })
-        .join(""),
-      linkOpts = linkedTargetOptions("");
+    var linkOpts = linkedTargetOptions("");
     h +=
-      '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation();(function(t){if(!((t.closest&&t.closest(\'#f-pstk\'))||(t.closest&&t.closest(\'#f-pltk\'))||(t.closest&&t.closest(\'#f-pstk-sug\'))||(t.closest&&t.closest(\'#f-pltk-sug\'))))frfCloseTokenSuggestions()})(event.target)"><div class="mdt">Neue Position</div><div class="fg"><label>Typ</label><select id="f-pt"><option value="frf">FRF</option><option value="hedge">Absicherung</option></select></div><div class="fr"><div class="fg"><label>Short Börse</label><select id="f-psh" onchange="frfTokenReset(\'new\',\'short\');frfTokenSuggest(\'new\',\'short\')">' +
-      exOpts +
-      "</select></div><div class=\"fg\"><label>Long Börse</label><select id=\"f-plg\" onchange=\"frfTokenReset('new','long');frfTokenSuggest('new','long')\"><option value=\"_spot\">Spot (kein Hebel)</option>" +
-      exOpts +
-      '</select></div></div><div class="fr"><div class="fg"><label>Short Token</label><input id="f-pstk" placeholder="Markt auf Short Börse" autocomplete="off" oninput="frfTokenSuggest(\'new\',\'short\')" onfocus="frfTokenSuggest(\'new\',\'short\')"><input id="f-psasset" type="hidden"><input id="f-psmkt" type="hidden"><div id="f-pstk-sug" class="tok-suggest"></div></div><div class="fg"><label>Long Token</label><input id="f-pltk" placeholder="Markt auf Long Börse" autocomplete="off" oninput="frfTokenSuggest(\'new\',\'long\')" onfocus="frfTokenSuggest(\'new\',\'long\')"><input id="f-plasset" type="hidden"><input id="f-plmkt" type="hidden"><div id="f-pltk-sug" class="tok-suggest"></div></div></div><div class="fg"><label>Token-Menge</label><input id="f-pta" type="number" step="any"></div><div class="fr"><div class="fg"><label>Entry Short ($)</label><input id="f-ptes" type="number" step="any"></div><div class="fg"><label>Entry Long ($)</label><input id="f-ptel" type="number" step="any"></div></div><p style="color:var(--t4);font-size:11px;margin:-4px 0 8px">Pos. = Menge × Entry</p><div style="font-size:11px;color:var(--t4);margin:8px 0 6px">Startdatum (leer = jetzt)</div><div class="fr"><div class="fg"><label>Datum</label><input id="f-psd" type="date"></div><div class="fg"><label>Uhrzeit</label><input id="f-pst" type="time"></div></div><div class="fg"><label>Fees</label><input id="f-pfe" type="number" step="0.01" value="0"></div><div class="fg"><label>Verknüpfung</label><select id="f-pls">' +
+      '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation();(function(t){if(!((t.closest&&t.closest(\'#f-psex\'))||(t.closest&&t.closest(\'#f-plex\'))||(t.closest&&t.closest(\'#f-psex-sug\'))||(t.closest&&t.closest(\'#f-plex-sug\'))||(t.closest&&t.closest(\'#f-pstk\'))||(t.closest&&t.closest(\'#f-pltk\'))||(t.closest&&t.closest(\'#f-pstk-sug\'))||(t.closest&&t.closest(\'#f-pltk-sug\')))) { frfCloseExchangeSuggestions(); frfCloseTokenSuggestions(); }})(event.target)"><div class="mdt">Neue Position</div><div class="fg"><label>Typ</label><select id="f-pt"><option value="frf">FRF</option><option value="hedge">Absicherung</option></select></div><div class="fr"><div class="fg"><label>Short Börse</label><input id="f-psex" placeholder="Short-Börse eingeben" autocomplete="off" oninput="frfExchangeSuggest(\'new\',\'short\')" onclick="frfExchangeSuggest(\'new\',\'short\', true)" onfocus="frfExchangeSuggest(\'new\',\'short\', true)"><input id="f-psh" type="hidden"><div id="f-psex-sug" class="tok-suggest"></div></div><div class="fg"><label>Long Börse</label><input id="f-plex" value="Spot" placeholder="Long-Börse eingeben" autocomplete="off" oninput="frfExchangeSuggest(\'new\',\'long\')" onclick="frfExchangeSuggest(\'new\',\'long\', true)" onfocus="frfExchangeSuggest(\'new\',\'long\', true)"><input id="f-plg" type="hidden" value="_spot"><div id="f-plex-sug" class="tok-suggest"></div></div></div><div class="fr"><div class="fg"><label>Short Token</label><input id="f-pstk" placeholder="Markt auf Short Börse" autocomplete="off" oninput="frfTokenSuggest(\'new\',\'short\')" onfocus="frfTokenSuggest(\'new\',\'short\')"><input id="f-psasset" type="hidden"><input id="f-psmkt" type="hidden"><div id="f-pstk-sug" class="tok-suggest"></div></div><div class="fg"><label>Long Token</label><input id="f-pltk" placeholder="Markt auf Long Börse" autocomplete="off" oninput="frfTokenSuggest(\'new\',\'long\')" onfocus="frfTokenSuggest(\'new\',\'long\')"><input id="f-plasset" type="hidden"><input id="f-plmkt" type="hidden"><div id="f-pltk-sug" class="tok-suggest"></div></div></div><div class="fg"><label>Token-Menge</label><input id="f-pta" type="number" step="any"></div><div class="fr"><div class="fg"><label>Entry Short ($)</label><input id="f-ptes" type="number" step="any"></div><div class="fg"><label>Entry Long ($)</label><input id="f-ptel" type="number" step="any"></div></div><p style="color:var(--t4);font-size:11px;margin:-4px 0 8px">Pos. = Menge × Entry</p><div style="font-size:11px;color:var(--t4);margin:8px 0 6px">Startdatum (leer = jetzt)</div><div class="fr"><div class="fg"><label>Datum</label><input id="f-psd" type="date"></div><div class="fg"><label>Uhrzeit</label><input id="f-pst" type="time"></div></div><div class="fg"><label>Fees</label><input id="f-pfe" type="number" step="0.01" value="0"></div><div class="fg"><label>Verknüpfung</label><select id="f-pls">' +
       linkOpts +
       '</select></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hFpos()">Erstellen</button></div></div></div>';
   }
   if (M.fepos) {
     var fp2 = FR.positions.find((x) => x.id === M.fepos.id);
     if (fp2) {
-      var exOpts2 = FR.exchanges
-          .map(function (e) {
-            return (
-              '<option value="' +
-              e.id +
-              '"' +
-              (fp2.shortExchangeId === e.id ? " selected" : "") +
-              ">" +
-              es(normExchangeLabel(e.name)) +
-              "</option>"
-            );
-          })
-          .join(""),
-        exOptsL =
-          '<option value="_spot"' +
-          (fp2.longIsSpot ? " selected" : "") +
-          ">Spot</option>" +
-          FR.exchanges
-            .map(function (e) {
-              return (
-                '<option value="' +
-                e.id +
-                '"' +
-                (!fp2.longIsSpot && fp2.longExchangeId === e.id
-                  ? " selected"
-                  : "") +
-                ">" +
-                es(normExchangeLabel(e.name)) +
-                "</option>"
-              );
-            })
-            .join(""),
+      var shortExchangeName = normExchangeLabel(exchangeName(fp2.shortExchangeId) || ""),
+        longExchangeName = fp2.longIsSpot
+          ? "Spot"
+          : normExchangeLabel(exchangeName(fp2.longExchangeId) || ""),
         linkOpts2 = linkedTargetOptions(linkedTargetValue(fp2)),
         shortAsset = es(fp2.shortAssetSymbol || fp2.token || ""),
         shortMarket = es(fp2.shortMarketSymbol || fp2.token || ""),
         longAsset = es(fp2.longAssetSymbol || fp2.token || ""),
         longMarket = es(fp2.longMarketSymbol || fp2.token || "");
       h +=
-        '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation();(function(t){if(!((t.closest&&t.closest(\'#f-estk\'))||(t.closest&&t.closest(\'#f-eltk\'))||(t.closest&&t.closest(\'#f-estk-sug\'))||(t.closest&&t.closest(\'#f-eltk-sug\'))))frfCloseTokenSuggestions()})(event.target)"><div class="mdt">Position bearbeiten</div><div class="fg"><label>Typ</label><select id="f-eptype"><option value="frf" ' +
+        '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation();(function(t){if(!((t.closest&&t.closest(\'#f-esex\'))||(t.closest&&t.closest(\'#f-elex\'))||(t.closest&&t.closest(\'#f-esex-sug\'))||(t.closest&&t.closest(\'#f-elex-sug\'))||(t.closest&&t.closest(\'#f-estk\'))||(t.closest&&t.closest(\'#f-eltk\'))||(t.closest&&t.closest(\'#f-estk-sug\'))||(t.closest&&t.closest(\'#f-eltk-sug\')))) { frfCloseExchangeSuggestions(); frfCloseTokenSuggestions(); }})(event.target)"><div class="mdt">Position bearbeiten</div><div class="fg"><label>Typ</label><select id="f-eptype"><option value="frf" ' +
         (fp2.type === "frf" ? "selected" : "") +
         '>FRF</option><option value="hedge" ' +
         (fp2.type === "hedge" ? "selected" : "") +
-        ">Absicherung</option></select></div><div class=\"fr\"><div class=\"fg\"><label>Short Börse</label><select id=\"f-epsh\" onchange=\"frfTokenReset('edit','short');frfTokenSuggest('edit','short')\">" +
-        exOpts2 +
-        "</select></div><div class=\"fg\"><label>Long Börse</label><select id=\"f-eplg\" onchange=\"frfTokenReset('edit','long');frfTokenSuggest('edit','long')\">" +
-        exOptsL +
-        '</select></div></div><div class="fr"><div class="fg"><label>Short Token</label><input id="f-estk" value="' +
+        '</option></select></div><div class="fr"><div class="fg"><label>Short Börse</label><input id="f-esex" value="' +
+        es(shortExchangeName) +
+        '" autocomplete="off" oninput="frfExchangeSuggest(\'edit\',\'short\')" onclick="frfExchangeSuggest(\'edit\',\'short\', true)" onfocus="frfExchangeSuggest(\'edit\',\'short\', true)"><input id="f-epsh" type="hidden" value="' +
+        es(fp2.shortExchangeId || "") +
+        '"><div id="f-esex-sug" class="tok-suggest"></div></div><div class="fg"><label>Long Börse</label><input id="f-elex" value="' +
+        es(longExchangeName) +
+        '" autocomplete="off" oninput="frfExchangeSuggest(\'edit\',\'long\')" onclick="frfExchangeSuggest(\'edit\',\'long\', true)" onfocus="frfExchangeSuggest(\'edit\',\'long\', true)"><input id="f-eplg" type="hidden" value="' +
+        es(fp2.longIsSpot ? '_spot' : fp2.longExchangeId || "") +
+        '"><div id="f-elex-sug" class="tok-suggest"></div></div></div><div class="fr"><div class="fg"><label>Short Token</label><input id="f-estk" value="' +
         shortMarket +
         '" autocomplete="off" oninput="frfTokenSuggest(\'edit\',\'short\')" onfocus="frfTokenSuggest(\'edit\',\'short\')"><input id="f-esasset" type="hidden" value="' +
         shortAsset +
@@ -6228,7 +6605,7 @@ function R(options) {
   }
   if (M.fclose) {
     h +=
-      '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Position schließen</div><div class="fg"><label>PNL Short-Seite (USDC)</label><input id="f-fcs" type="number" step="0.01"></div><div class="fg"><label>PNL Long-Seite (USDC / Spot)</label><input id="f-fcl" type="number" step="0.01"></div><div class="fg"><label>Fees (optional)</label><input id="f-fcf" type="number" step="0.01" value="0"></div><div class="fg"><label>Notiz</label><input id="f-fcn"></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt be" style="flex:1;justify-content:center" onclick="hFclose()">Schließen</button></div></div></div>';
+      '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Position schließen</div><div class="fg"><label>PNL Short-Seite (USDC)</label><input id="f-fcs" type="number" step="0.01"></div><div class="fg"><label>PNL Long-Seite (USDC / Spot)</label><input id="f-fcl" type="number" step="0.01"></div><div class="fg"><label class="sw"><input type="checkbox" id="f-fci"><span class="sl2"></span></label> <span style="font-size:13px;margin-left:8px;vertical-align:super">PNL inkl. Fundings</span><div class="hnt">Standard ist aus. Dann bleiben Fundings separat und werden nicht in die Close-PNL eingerechnet.</div></div><div class="fg"><label>Fees (optional)</label><input id="f-fcf" type="number" step="0.01" value="0"></div><div class="fg"><label>Notiz</label><input id="f-fcn"></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt be" style="flex:1;justify-content:center" onclick="hFclose()">Schließen</button></div></div></div>';
   }
   if (M.fprc) {
     var ump = M.fprc.ump;
@@ -6353,14 +6730,14 @@ function R(options) {
     er: "f-era",
     ep: "f-epa",
     ei: "f-eia",
-    fex: "f-exn",
+    fex: "f-exp",
     fexm: "f-exma",
     fpos: "f-ptk",
     ffund: "f-ffa",
     fefund: "f-fefa",
     fclose: "f-fcs",
     femm: "f-fmma",
-    feex: "f-eexn",
+    feex: "f-eexp",
     fepos: "f-eptk",
     fprc: "f-mp",
     login: "l-email",
@@ -6585,231 +6962,54 @@ for (const [key, descriptor] of Object.entries(legacyBindings)) {
   });
 }
 
-const legacyFunctionNames = [
-  "setPgAct",
-  "setPgPast",
-  "setPgFrfO",
-  "setPgFrfC",
-  "uiKey",
-  "saveUi",
-  "restoreUi",
-  "normUi",
-  "cm",
-  "tgl",
-  "fd",
-  "fds",
-  "fts",
-  "db",
-  "calcApr",
-  "fn",
-  "fpr",
-  "es",
-  "onlineMeta",
-  "onlineBadge",
-  "ci",
-  "tr",
-  "posFloatingPnl",
-  "posPnl",
-  "tp",
-  "tg",
-  "bp",
-  "wa",
-  "stratIncl",
-  "sortDirMul",
-  "cmpText",
-  "cmpNumber",
-  "sortIndicator",
-  "sortableHeader",
-  "toggleStrategySort",
-  "toggleFrfSort",
-  "sortStrategies",
-  "frfAprForSort",
-  "frfTotalApr",
-  "sortFrf",
-  "exMargin",
-  "exName",
-  "latestFunding",
-  "posIncl",
-  "runningFunding",
-  "posLiveSize",
-  "posEntrySize",
-  "posCapital",
-  "roleRank",
-  "hasRole",
-  "canManageMessages",
-  "canOpenAdmin",
-  "canManageRoles",
-  "canManageAllRoles",
-  "roleBadge",
-  "fetchPrices",
-  "loopTokenDatalist",
-  "loopOracleCfg",
-  "loopRateKind",
-  "apyToApr",
-  "normalizeLoopRateToApr",
-  "loopRateLabel",
-  "updateLoopRateLabels",
-  "loopPegKey",
-  "loopPegMarketPrice",
-  "shouldFetchLoopPegQuote",
-  "requestLoopPegQuote",
-  "refreshLoopPegQuotes",
-  "loopPegInfo",
-  "fmtPeg",
-  "renderPegSummary",
-  "updateLoopPegPreview",
-  "fetchLoopOracleDefaults",
-  "api",
-  "F",
-  "loadData",
-  "wakeUi",
-  "loadLoops",
-  "setPid",
-  "logout",
-  "hLogin",
-  "hReg",
-  "verifyCooldownText",
-  "resendVerifyMail",
-  "dBack",
-  "rBack",
-  "hNewProf",
-  "delProf",
-  "loadAdmin",
-  "adminTgl",
-  "adminFeatTgl",
-  "adminDel",
-  "adminRole",
-  "loadFeatures",
-  "hSupport",
-  "loopPayloadFromForm",
-  "loopTokenPrice",
-  "calculateLoopingTotals",
-  "loopSupplyValue",
-  "loopBorrowValue",
-  "loopBorrowTokenAmount",
-  "loopLeverage",
-  "loopNetApr",
-  "calcLoopData",
-  "hLoopCr",
-  "openLoopDetail",
-  "openLoopEdit",
-  "hLoopUpd",
-  "closeLoop",
-  "updateLoopName",
-  "renderLoopModal",
-  "hFeature",
-  "hVote",
-  "openAdminDetail",
-  "renderAdminChart",
-  "endS",
-  "reaS",
-  "delS",
-  "delR",
-  "delP",
-  "togP",
-  "togStratApr",
-  "doUndo",
-  "frfDelEx",
-  "frfDelPos",
-  "frfDelFund",
-  "frfClosePos",
-  "frfTogPos",
-  "frfTogStrat",
-  "frfReopenPos",
-  "linkedTargetValue",
-  "linkedTargetOptions",
-  "linkedTargetPayload",
-  "normExchangeLabel",
-  "frfTokenFieldIds",
-  "frfCounterSide",
-  "frfTokenSuggestBox",
-  "frfRenderTokenSuggestions",
-  "frfTokenChoice",
-  "frfTokenReset",
-  "frfTokenSelect",
-  "frfCloseTokenSuggestions",
-  "frfTokenSuggestSection",
-  "frfTokenSuggest",
-  "frfLiveQuote",
-  "frfLiveRemaining",
-  "frfLiveButtonLabel",
-  "frfScheduleLiveTick",
-  "frfEnsureLive",
-  "frfFetchLive",
-  "frfFundingPct",
-  "frfFundingAnnualRate",
-  "frfFundingAnnualDisplay",
-  "frfFundingAnnualPct",
-  "frfFundingPeriod",
-  "frfFundingRowsHtml",
-  "frfFundingSection",
-  "hCr",
-  "hRw",
-  "hIv",
-  "hPl",
-  "hNo",
-  "hTk",
-  "hEd",
-  "hEr",
-  "hEp",
-  "hEi",
-  "hFex",
-  "hFeex",
-  "hFexm",
-  "hFemm",
-  "hFpos",
-  "hFepos",
-  "hFfund",
-  "hFefund",
-  "hFclose",
-  "hFprc",
-  "loadMessageSummary",
-  "hintAttr",
-  "msgTs",
-  "msgFmt",
-  "msgIso",
-  "msgCatCls",
-  "msgCatLbl",
-  "msgPriLbl",
-  "msgThreads",
-  "msgFilteredThreads",
-  "msgSelectedThread",
-  "msgAdminSelected",
-  "msgResetCompose",
-  "msgComposeAll",
-  "msgComposeUser",
-  "msgLoadDraft",
-  "msgPreview",
-  "msgPayload",
-  "msgSave",
-  "msgDelete",
-  "msgOpenThread",
-  "msgMarkAllRead",
-  "msgReplyOpen",
-  "hMsgReply",
-  "msgSelectAdmin",
-  "loadMessageRecipients",
-  "loadMessages",
-  "openMessages",
-  "render",
-  "renderHeader",
-  "renderView",
-  "renderModals",
-  "renderViewOnly",
-  "renderModalOnly",
-  "renderMsgBadges",
-  "renderMessagesView",
-  "R",
-  "cardH",
-  "pgNav",
-];
+const _legacyRegistry = {
+  setPgAct, setPgPast, setPgFrfO, setPgFrfC, uiKey, saveUi, restoreUi, normUi,
+  cm, tgl, fd, fds, fts, db, calcApr, fn, fpr, es, onlineMeta, onlineBadge,
+  ci, tr, posFloatingPnl, posPnl, tp, tg, bp, wa,
+  stratIncl, sortDirMul, cmpText, cmpNumber, sortIndicator, sortableHeader,
+  toggleStrategySort, toggleFrfSort, sortStrategies, frfAprForSort, frfTotalApr, sortFrf,
+  exMargin, exName, latestFunding, posIncl, runningFunding, posLiveSize, posEntrySize, posCapital,
+  roleRank, hasRole, canManageMessages, canOpenAdmin, canManageRoles, canManageAllRoles, roleBadge,
+  fetchPrices, loopTokenDatalist, loopOracleCfg, loopRateKind, apyToApr, normalizeLoopRateToApr,
+  loopRateLabel, updateLoopRateLabels, loopPegKey, loopPegMarketPrice, shouldFetchLoopPegQuote,
+  requestLoopPegQuote, refreshLoopPegQuotes, loopPegInfo, fmtPeg, renderPegSummary,
+  updateLoopPegPreview, fetchLoopOracleDefaults,
+  api, F, loadData, wakeUi, loadLoops, setPid, logout, hLogin, hReg,
+  verifyCooldownText, resendVerifyMail, dBack, rBack, hNewProf, delProf,
+  loadAdmin, adminTgl, adminFeatTgl, adminDel, adminRole, loadFeatures, hSupport,
+  loopPayloadFromForm, loopTokenPrice, calculateLoopingTotals, loopSupplyValue,
+  loopBorrowValue, loopBorrowTokenAmount, loopLeverage, loopNetApr, calcLoopData,
+  hLoopCr, openLoopDetail, openLoopEdit, hLoopUpd, saveLoopCurrentAmounts, closeLoop, updateLoopName, renderLoopModal,
+  hFeature, hVote, openAdminDetail, renderAdminChart,
+  endS, reaS, delS, delR, delP, togP, togStratApr, doUndo,
+  frfDelEx, frfDelPos, frfDelFund, frfClosePos, frfToggleCloseFunding,
+  frfTogPos, frfTogStrat, frfReopenPos,
+  linkedTargetValue, linkedTargetOptions, linkedTargetPayload,
+  exchangePresetValueForName, resolveExchangeFormName, exchangePresetOptionsHtml,
+  exchangePresetFieldIds, syncExchangePreset,
+  frfResolveExchangeSelection, frfFilterExchangeOptions, frfExchangeFieldIds,
+  frfExchangeChoice, frfRenderExchangeSuggestions, frfExchangeSelect,
+  frfExchangeSuggestSection, frfExchangeSuggest, frfCloseExchangeSuggestions,
+  normExchangeLabel, frfTokenFieldIds, frfCounterSide, frfTokenSuggestBox,
+  frfRenderTokenSuggestions, frfTokenChoice, frfTokenReset, frfTokenSelect,
+  frfCloseTokenSuggestions, frfTokenSuggestSection, frfTokenSuggest,
+  frfLiveQuote, frfLiveRemaining, frfLiveButtonLabel, frfScheduleLiveTick,
+  frfEnsureLive, frfFetchLive,
+  frfFundingPct, frfFundingAnnualRate, frfFundingAnnualDisplay, frfFundingAnnualPct,
+  frfFundingPeriod, frfFundingRowsHtml, frfFundingSection,
+  hCr, hRw, hIv, hPl, hNo, hTk, hEd, hEr, hEp, hEi,
+  hFex, hFeex, hFexm, hFemm, hFpos, hFepos, hFfund, hFefund, hFclose, hFprc,
+  loadMessageSummary, hintAttr, msgTs, msgFmt, msgIso, msgCatCls, msgCatLbl, msgPriLbl,
+  msgThreads, msgFilteredThreads, msgSelectedThread, msgAdminSelected,
+  msgResetCompose, msgComposeAll, msgComposeUser, msgLoadDraft, msgPreview,
+  msgPayload, msgSave, msgDelete, msgOpenThread, msgMarkAllRead, msgReplyOpen,
+  hMsgReply, msgSelectAdmin, loadMessageRecipients, loadMessages, openMessages,
+  render, renderHeader, renderView, renderModals, renderViewOnly, renderModalOnly,
+  renderMsgBadges, renderMessagesView, R,
+};
 
-for (const name of legacyFunctionNames) {
-  try {
-    window[name] = eval(name);
-  } catch (error) {
-    // ignore nested helpers that are not top-level bindings
-  }
+for (const [name, value] of Object.entries(_legacyRegistry)) {
+  window[name] = value;
 }
 
 loadData();

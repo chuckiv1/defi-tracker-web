@@ -46,22 +46,10 @@ async function initDB() {
         passHash VARCHAR(255) NOT NULL,
         role VARCHAR(50) DEFAULT 'user',
         isVerified BOOLEAN DEFAULT false,
+        verifyToken VARCHAR(255),
         isBlocked BOOLEAN DEFAULT false,
-        canBroadcast BOOLEAN DEFAULT false,
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-
-      CREATE TABLE IF NOT EXISTS email_verification_logs (
-        id VARCHAR(50) PRIMARY KEY,
-        accountId VARCHAR(50) REFERENCES accounts(id) ON DELETE CASCADE,
-        tokenHash VARCHAR(255) NOT NULL,
-        expiresAt TIMESTAMP NOT NULL,
-        usedAt TIMESTAMP,
-        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_verification_logs_account ON email_verification_logs(accountId, usedAt);
-      CREATE INDEX IF NOT EXISTS idx_verification_logs_hash ON email_verification_logs(tokenHash) WHERE usedAt IS NULL;
 
       CREATE TABLE IF NOT EXISTS profiles (
         id VARCHAR(50) PRIMARY KEY,
@@ -83,23 +71,6 @@ async function initDB() {
         accountId VARCHAR(50) PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
         lastSeen TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
-
-      CREATE TABLE IF NOT EXISTS audit_logs (
-        id VARCHAR(50) PRIMARY KEY,
-        action VARCHAR(50) NOT NULL,
-        actorId VARCHAR(50) REFERENCES accounts(id) ON DELETE SET NULL,
-        targetId VARCHAR(50),
-        tableRef VARCHAR(50),
-        beforeData JSONB,
-        afterData JSONB,
-        ip VARCHAR(45),
-        userAgent TEXT,
-        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actorId, createdAt DESC);
-      CREATE INDEX IF NOT EXISTS idx_audit_logs_target ON audit_logs(targetId, action, createdAt DESC);
-
       CREATE TABLE IF NOT EXISTS feature_requests (
         id VARCHAR(50) PRIMARY KEY,
         account_id VARCHAR(50) REFERENCES accounts(id) ON DELETE CASCADE,
@@ -136,6 +107,8 @@ async function initDB() {
         borrowApy NUMERIC NOT NULL,
         endCollateralAmount NUMERIC DEFAULT 0,
         endBorrowedAmount NUMERIC DEFAULT 0,
+        currentCollateralAmount NUMERIC DEFAULT 0,
+        currentBorrowedAmount NUMERIC DEFAULT 0,
         leverage NUMERIC NOT NULL DEFAULT 1,
         status VARCHAR(20) DEFAULT 'active',
         notes TEXT,
@@ -148,6 +121,8 @@ async function initDB() {
       ALTER TABLE loops ADD COLUMN IF NOT EXISTS notes TEXT;
       ALTER TABLE loops ADD COLUMN IF NOT EXISTS pegReferenceToken VARCHAR(50);
       ALTER TABLE loops ADD COLUMN IF NOT EXISTS pegEntryPrice NUMERIC;
+      ALTER TABLE loops ADD COLUMN IF NOT EXISTS currentCollateralAmount NUMERIC DEFAULT 0;
+      ALTER TABLE loops ADD COLUMN IF NOT EXISTS currentBorrowedAmount NUMERIC DEFAULT 0;
 
       CREATE TABLE IF NOT EXISTS loop_updates (
         id VARCHAR(50) PRIMARY KEY,

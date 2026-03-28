@@ -13,7 +13,7 @@ function registerLoopRoutes(app, deps) {
 
   app.post('/api/loops', requireAuth, attachProfile, async (req, res) => {
     try {
-      const { name, startDate, collateralToken, borrowToken, startCollateral, collateralPrice, startCollateralAmount, supplyApy, borrowedAmount, borrowApy, endCollateralAmount, endBorrowedAmount, leverage, notes, pegReferenceToken, pegEntryPrice } = req.body;
+      const { name, startDate, collateralToken, borrowToken, startCollateral, collateralPrice, startCollateralAmount, supplyApy, borrowedAmount, borrowApy, endCollateralAmount, endBorrowedAmount, currentCollateralAmount, currentBorrowedAmount, leverage, notes, pegReferenceToken, pegEntryPrice } = req.body;
       if (!name || !startDate || !collateralToken || !borrowToken || !startCollateral || !collateralPrice || !startCollateralAmount || !supplyApy || !borrowApy) {
         return res.status(400).json({ error: 'Pflichtfelder fehlen' });
       }
@@ -24,14 +24,16 @@ function registerLoopRoutes(app, deps) {
       const numericEndBorrowedAmount = parseFloat(endBorrowedAmount);
       const borrowAmountValue = Number.isFinite(numericBorrowedAmount) ? numericBorrowedAmount : (Number.isFinite(numericEndBorrowedAmount) ? numericEndBorrowedAmount : 0);
       const supplyAmountValue = Number.isFinite(parseFloat(endCollateralAmount)) ? parseFloat(endCollateralAmount) : parseFloat(startCollateralAmount);
+      const currentSupplyAmountValue = Number.isFinite(parseFloat(currentCollateralAmount)) ? parseFloat(currentCollateralAmount) : supplyAmountValue;
+      const currentBorrowAmountValue = Number.isFinite(parseFloat(currentBorrowedAmount)) ? parseFloat(currentBorrowedAmount) : (Number.isFinite(numericEndBorrowedAmount) ? numericEndBorrowedAmount : borrowAmountValue);
       const loopNotes = String(notes || '').trim().slice(0, 4000);
       const normalizedPegReferenceToken = normalizeLoopTokenInput(pegReferenceToken || borrowToken);
       const numericPegEntryPrice = Number.isFinite(parseFloat(pegEntryPrice)) ? parseFloat(pegEntryPrice) : null;
 
       await db.query(
-        `INSERT INTO loops (id, profileId, name, startDate, collateralToken, borrowToken, initialCollateral, supplyApy, borrowApr, supplyAmount, borrowAmount, startCollateral, collateralPrice, startCollateralAmount, borrowedAmount, borrowApy, endCollateralAmount, endBorrowedAmount, leverage, status, notes, pegReferenceToken, pegEntryPrice)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
-        [loopId, req.profile.id, name, startDate, collateralToken, borrowToken, startCollateral, supplyApy, borrowApy, supplyAmountValue, borrowAmountValue, startCollateral, collateralPrice, startCollateralAmount, borrowAmountValue, borrowApy, endCollateralAmount || startCollateralAmount, Number.isFinite(numericEndBorrowedAmount) ? numericEndBorrowedAmount : borrowAmountValue, numericLeverage, 'active', loopNotes || null, normalizedPegReferenceToken || null, numericPegEntryPrice],
+        `INSERT INTO loops (id, profileId, name, startDate, collateralToken, borrowToken, initialCollateral, supplyApy, borrowApr, supplyAmount, borrowAmount, startCollateral, collateralPrice, startCollateralAmount, borrowedAmount, borrowApy, endCollateralAmount, endBorrowedAmount, currentCollateralAmount, currentBorrowedAmount, leverage, status, notes, pegReferenceToken, pegEntryPrice)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`,
+        [loopId, req.profile.id, name, startDate, collateralToken, borrowToken, startCollateral, supplyApy, borrowApy, supplyAmountValue, borrowAmountValue, startCollateral, collateralPrice, startCollateralAmount, borrowAmountValue, borrowApy, endCollateralAmount || startCollateralAmount, Number.isFinite(numericEndBorrowedAmount) ? numericEndBorrowedAmount : borrowAmountValue, currentSupplyAmountValue, currentBorrowAmountValue, numericLeverage, 'active', loopNotes || null, normalizedPegReferenceToken || null, numericPegEntryPrice],
       );
       res.json({ id: loopId, ok: 1 });
     } catch (error) {
@@ -42,7 +44,7 @@ function registerLoopRoutes(app, deps) {
 
   app.put('/api/loops/:id', requireAuth, attachProfile, async (req, res) => {
     try {
-      const { name, startDate, collateralToken, borrowToken, startCollateral, collateralPrice, startCollateralAmount, supplyApy, borrowApy, leverage, endCollateralAmount, endBorrowedAmount, status, notes, pegReferenceToken, pegEntryPrice } = req.body;
+      const { name, startDate, collateralToken, borrowToken, startCollateral, collateralPrice, startCollateralAmount, supplyApy, borrowApy, leverage, endCollateralAmount, endBorrowedAmount, currentCollateralAmount, currentBorrowedAmount, status, notes, pegReferenceToken, pegEntryPrice } = req.body;
       const nStartColl = Number.isFinite(parseFloat(startCollateral)) ? parseFloat(startCollateral) : null;
       const nCollPrice = Number.isFinite(parseFloat(collateralPrice)) ? parseFloat(collateralPrice) : null;
       const nStartAmt = Number.isFinite(parseFloat(startCollateralAmount)) ? parseFloat(startCollateralAmount) : null;
@@ -51,6 +53,8 @@ function registerLoopRoutes(app, deps) {
       const nLev = Number.isFinite(parseFloat(leverage)) ? parseFloat(leverage) : null;
       const nEndColl = Number.isFinite(parseFloat(endCollateralAmount)) ? parseFloat(endCollateralAmount) : null;
       const nEndBorrow = Number.isFinite(parseFloat(endBorrowedAmount)) ? parseFloat(endBorrowedAmount) : null;
+      const nCurrentColl = Number.isFinite(parseFloat(currentCollateralAmount)) ? parseFloat(currentCollateralAmount) : null;
+      const nCurrentBorrow = Number.isFinite(parseFloat(currentBorrowedAmount)) ? parseFloat(currentBorrowedAmount) : null;
       const loopNotes = typeof notes === 'string' ? notes.trim().slice(0, 4000) : null;
       const normalizedPegReferenceToken = pegReferenceToken === '' ? '' : (pegReferenceToken == null ? null : normalizeLoopTokenInput(pegReferenceToken));
       const nPegEntry = pegEntryPrice === '' ? null : (Number.isFinite(parseFloat(pegEntryPrice)) ? parseFloat(pegEntryPrice) : null);
@@ -60,9 +64,10 @@ function registerLoopRoutes(app, deps) {
          initialCollateral = COALESCE($5,initialCollateral), startCollateral = COALESCE($5,startCollateral), collateralPrice = COALESCE($6,collateralPrice), startCollateralAmount = COALESCE($7,startCollateralAmount),
          supplyApy = COALESCE($8,supplyApy), borrowApr = COALESCE($9,borrowApr), borrowApy = COALESCE($9,borrowApy), leverage = COALESCE($10,leverage),
          supplyAmount = COALESCE($11,supplyAmount), borrowAmount = COALESCE($12,borrowAmount), endCollateralAmount = COALESCE($11,endCollateralAmount), endBorrowedAmount = COALESCE($12,endBorrowedAmount),
-         status = COALESCE($13,status), notes = COALESCE($14,notes), pegReferenceToken = CASE WHEN $15 = '' THEN NULL ELSE COALESCE($15, pegReferenceToken) END,
-         pegEntryPrice = COALESCE($16, pegEntryPrice), updatedAt = CURRENT_TIMESTAMP WHERE id = $17 AND profileId = $18`,
-        [name || null, startDate || null, collateralToken || null, borrowToken || null, nStartColl, nCollPrice, nStartAmt, nSupplyApy, nBorrowApy, nLev, nEndColl, nEndBorrow, status || null, loopNotes, normalizedPegReferenceToken, nPegEntry, req.params.id, req.profile.id],
+         currentCollateralAmount = COALESCE($13,currentCollateralAmount), currentBorrowedAmount = COALESCE($14,currentBorrowedAmount),
+         status = COALESCE($15,status), notes = COALESCE($16,notes), pegReferenceToken = CASE WHEN $17 = '' THEN NULL ELSE COALESCE($17, pegReferenceToken) END,
+         pegEntryPrice = COALESCE($18, pegEntryPrice), updatedAt = CURRENT_TIMESTAMP WHERE id = $19 AND profileId = $20`,
+        [name || null, startDate || null, collateralToken || null, borrowToken || null, nStartColl, nCollPrice, nStartAmt, nSupplyApy, nBorrowApy, nLev, nEndColl, nEndBorrow, nCurrentColl, nCurrentBorrow, status || null, loopNotes, normalizedPegReferenceToken, nPegEntry, req.params.id, req.profile.id],
       );
 
       if (rowCount === 0) return res.status(404).json({ error: 'Loop nicht gefunden' });
@@ -90,7 +95,8 @@ function registerLoopRoutes(app, deps) {
       const nextEndBorrowedAmount = Number.isFinite(parseFloat(endBorrowedAmount)) ? parseFloat(endBorrowedAmount) : null;
       await db.query(
         `UPDATE loops SET status = 'closed', endDate = $1, supplyAmount = COALESCE($2, supplyAmount, endCollateralAmount), borrowAmount = COALESCE($3, borrowAmount, endBorrowedAmount),
-         endCollateralAmount = COALESCE($2, endCollateralAmount, supplyAmount), endBorrowedAmount = COALESCE($3, endBorrowedAmount, borrowAmount), updatedAt = CURRENT_TIMESTAMP
+         endCollateralAmount = COALESCE($2, endCollateralAmount, supplyAmount), endBorrowedAmount = COALESCE($3, endBorrowedAmount, borrowAmount),
+         currentCollateralAmount = COALESCE(currentCollateralAmount, COALESCE($2, endCollateralAmount, supplyAmount)), currentBorrowedAmount = COALESCE(currentBorrowedAmount, COALESCE($3, endBorrowedAmount, borrowAmount)), updatedAt = CURRENT_TIMESTAMP
          WHERE id = $4 AND profileId = $5`,
         [endDate, nextEndCollateralAmount, nextEndBorrowedAmount, req.params.id, req.profile.id],
       );
