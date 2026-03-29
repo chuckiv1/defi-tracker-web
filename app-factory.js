@@ -17,7 +17,7 @@ const validation = require('./services/validation');
 const { createMailService } = require('./services/mail');
 const { createExchangeService } = require('./services/exchanges');
 const { createAuthMiddleware } = require('./middleware/auth');
-const { applyAuthRateLimiters, createAuthLimiter } = require('./middleware/rateLimiter');
+const { applyAuthRateLimiters, createAuthLimiter, createExternalApiLimiter } = require('./middleware/rateLimiter');
 const { registerAuthRoutes } = require('./routes/auth');
 const { registerProfileRoutes } = require('./routes/profiles');
 const { registerLoopRoutes } = require('./routes/loops');
@@ -153,6 +153,7 @@ app.use(cookieParser());
 app.set('trust proxy', 1);
 
 const authLimiter = createAuthLimiter(rateLimit);
+const externalApiLimiter = createExternalApiLimiter(rateLimit);
 applyAuthRateLimiters(app, authLimiter);
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -1158,11 +1159,12 @@ registerMessageRoutes(app, {
   mapMessageRow,
   mirrorMessageToRecipients,
   normalizeMessagePayload: validation.normalizeMessagePayload,
+  requireAdmin,
   requireAuth,
   requireSupport,
 });
 registerBackupRoutes(app, { attachProfile, isValidFrfPayload: validation.isValidFrfPayload, isValidStrategy: validation.isValidStrategy, requireAuth, saveProfile });
-registerOracleRoutes(app, { benqiProvider, normalizeLoopTokenInput: validation.normalizeLoopTokenInput, oracle, requireAuth });
+registerOracleRoutes(app, { benqiProvider, externalApiLimiter, normalizeLoopTokenInput: validation.normalizeLoopTokenInput, oracle, requireAuth });
 // ============================================
 // DEMO API (Unauthenticated)
 // ============================================
@@ -1326,6 +1328,7 @@ registerStrategyRoutes(app, { attachProfile, express, gid, requireAuth, saveProf
 registerFrfRoutes(app, {
   attachProfile,
   express,
+  externalApiLimiter,
   getExchangeFunding: exchangeService.getExchangeFunding,
   getExchangeQuote: exchangeService.getExchangeQuote,
   getFrfSpotFallback: exchangeService.getFrfSpotFallback,
