@@ -246,6 +246,23 @@ var CG_MAP = {
 var CG_REV = {};
 for (let k in CG_MAP) CG_REV[CG_MAP[k].toUpperCase()] = k;
 CG_REV.WAVAX = "avalanche";
+var BINANCE_PRICE_BASE_MAP = {
+  AVAX: "AVAX",
+  WAVAX: "AVAX",
+  BTC: "BTC",
+  WBTC: "BTC",
+  CBBTC: "BTC",
+  ETH: "ETH",
+  SOL: "SOL",
+  LINK: "LINK",
+  AAVE: "AAVE",
+  ARB: "ARB",
+  OP: "OP",
+  UNI: "UNI",
+  PENDLE: "PENDLE",
+  BERA: "BERA",
+};
+var BINANCE_PRICE_QUOTES = ["USDC", "USDT"];
 
 PID = localStorage.getItem("dv_pid") || null;
 
@@ -273,6 +290,74 @@ function saveUi() {
       }),
     );
   } catch (e) {}
+}
+function loopBinanceBaseAsset(sym) {
+  var key = String(sym || "").trim().toUpperCase();
+  return BINANCE_PRICE_BASE_MAP[key] || null;
+}
+function buildBinancePriceLookup(symbols) {
+  var symbolPairs = {},
+    requestPairs = [];
+  Object.keys(symbols || {}).forEach(function (sym) {
+    var baseAsset = loopBinanceBaseAsset(sym);
+    if (!baseAsset) return;
+    var pairs = BINANCE_PRICE_QUOTES.map(function (quote) {
+      return baseAsset + quote;
+    });
+    symbolPairs[sym] = pairs;
+    pairs.forEach(function (pair) {
+      if (requestPairs.indexOf(pair) === -1) requestPairs.push(pair);
+    });
+  });
+  return { symbolPairs: symbolPairs, requestPairs: requestPairs };
+}
+function applyBinancePriceRows(symbolPairs, rows) {
+  var tickerMap = {};
+  (rows || []).forEach(function (row) {
+    var symbol = String((row && row.symbol) || "").trim().toUpperCase(),
+      price = parseFloat(row && row.price);
+    if (symbol && price > 0) tickerMap[symbol] = price;
+  });
+  Object.keys(symbolPairs || {}).forEach(function (sym) {
+    var price = 0;
+    (symbolPairs[sym] || []).some(function (pair) {
+      var pairPrice = parseFloat(tickerMap[pair] || 0);
+      if (pairPrice > 0) {
+        price = pairPrice;
+        return true;
+      }
+      return false;
+    });
+    if (price > 0) PRICES[sym] = price;
+  });
+}
+function fetchCoinGeckoLoopPrices(tokens) {
+  var missingSymbols = Object.keys(tokens || {}).filter(function (sym) {
+    return !(parseFloat(PRICES[sym] || 0) > 0);
+  });
+  if (!missingSymbols.length) return Promise.resolve();
+  var coinGeckoIds = [];
+  missingSymbols.forEach(function (sym) {
+    var id = tokens[sym];
+    if (id && coinGeckoIds.indexOf(id) === -1) coinGeckoIds.push(id);
+  });
+  if (!coinGeckoIds.length) return Promise.resolve();
+  return fetch(
+    "https://api.coingecko.com/api/v3/simple/price?ids=" +
+      coinGeckoIds.join(",") +
+      "&vs_currencies=usd",
+  )
+    .then(function (r) {
+      return r.ok ? r.json() : {};
+    })
+    .then(function (d) {
+      missingSymbols.forEach(function (sym) {
+        var cgId = tokens[sym],
+          price = d && d[cgId] ? parseFloat(d[cgId].usd) : 0;
+        if (price > 0) PRICES[sym] = price;
+      });
+    })
+    .catch(function () {});
 }
 function restoreUi() {
   try {
@@ -459,6 +544,154 @@ function onlineBadge(ts) {
 function ci(s) {
   var h = s.investmentHistory;
   return h && h.length ? h.reduce((a, x) => a + (parseFloat(x.amount) || 0), 0) : 0;
+}
+function strategyTokenEntries(s) {
+  var history = Array.isArray(s && s.investmentHistory) ? s.investmentHistory : [],
+    rows = [];
+  history.forEach(function (entry) {
+    (Array.isArray(entry && entry.tokenChanges) ? entry.tokenChanges : []).forEach(function (change) {
+      var name = String((change && change.name) || '').trim(),
+        amount = parseFloat(change && change.amount),
+        entryPrice = parseFloat(change && change.entryPrice);
+      if (!name || !Number.isFinite(amount) || amount === 0) return;
+      rows.push({
+        name: name,
+        amount: amount,
+        entryPrice: Number.isFinite(entryPrice) ? entryPrice : 0,
+        date: entry && entry.date ? entry.date : null,
+      });
+    });
+  });
+  if (s && s.token && s.token.name) {
+    rows.unshift({
+      name: String(s.token.name || '').trim(),
+      amount: parseFloat(s.token.amount) || 0,
+      entryPrice: parseFloat(s.token.entryPrice) || 0,
+      date: s.startDate || null,
+    });
+  }
+  return rows.filter(function (entry) {
+    return entry.name && Number.isFinite(entry.amount) && entry.amount !== 0;
+  });
+}
+function strategyHasTokenEvents(s) {
+  return Array.isArray(s && s.investmentHistory)
+    ? s.investmentHistory.some(function (entry) {
+        return Array.isArray(entry && entry.tokenChanges) && entry.tokenChanges.length;
+      })
+    : false;
+}
+function strategyTokenSummary(s) {
+  var map = {};
+  strategyTokenEntries(s).forEach(function (entry) {
+    var key = entry.name.toUpperCase();
+    if (!map[key]) {
+      map[key] = { name: entry.name, amount: 0, positiveAmount: 0, weightedCost: 0 };
+    }
+    map[key].amount += entry.amount;
+    if (entry.amount > 0 && entry.entryPrice > 0) {
+      map[key].positiveAmount += entry.amount;
+      map[key].weightedCost += entry.amount * entry.entryPrice;
+    }
+  });
+  return Object.values(map)
+    .filter(function (entry) {
+      return Math.abs(entry.amount) > 1e-9;
+    })
+    .map(function (entry) {
+      var avgEntry = entry.positiveAmount > 0 ? entry.weightedCost / entry.positiveAmount : 0;
+      return {
+        name: entry.name,
+        amount: entry.amount,
+        entryPrice: avgEntry,
+        value: avgEntry > 0 ? entry.amount * avgEntry : 0,
+      };
+    })
+    .sort(function (a, b) {
+      return String(a.name || '').localeCompare(String(b.name || ''), 'de');
+    });
+}
+function strategyTokenSearchText(s) {
+  return strategyTokenSummary(s)
+    .map(function (entry) {
+      return String(entry.name || '').toLowerCase();
+    })
+    .join(' ');
+}
+function strategyTokenBadges(s) {
+  return strategyTokenSummary(s)
+    .map(function (entry) {
+      return '<span class="tkb">' + es(entry.name) + ' ' + fn(entry.amount) + '</span>';
+    })
+    .join('');
+}
+function renderStrategyTokenChanges(entry) {
+  var rows = Array.isArray(entry && entry.tokenChanges) ? entry.tokenChanges : [];
+  if (!rows.length) return '';
+  return '<div style="display:grid;gap:4px">' + rows
+    .map(function (item) {
+      var amount = parseFloat(item.amount) || 0,
+        entryPrice = parseFloat(item.entryPrice) || 0,
+        sign = amount > 0 ? '+' : '-';
+      return (
+        '<div style="font-size:12px;color:var(--t2);line-height:1.4">' +
+        sign +
+        ' ' +
+        fn(Math.abs(amount)) +
+        ' ' +
+        es(item.name) +
+        ' @ ' +
+        (entryPrice > 0 ? fn(entryPrice) + '$' : '—') +
+        '</div>'
+      );
+    })
+    .join('') + '</div>';
+}
+function strategyTokenRowHtml(values) {
+  values = values || {};
+  return '<div class="strategy-token-row" style="margin-top:10px;padding:10px;border:1px dashed var(--bd2);border-radius:10px"><div class="fr" style="align-items:flex-end"><div class="fg"><label>Token</label><input class="strategy-token-name" value="' +
+    es(values.name || '') +
+    '"></div><div class="fg"><label>Menge</label><input class="strategy-token-amount" type="number" step="any" value="' +
+    es(values.amount || '') +
+    '"></div><div class="fg"><label>Entry ($)</label><input class="strategy-token-entry" type="number" step="any" value="' +
+    es(values.entryPrice || '') +
+    '"></div><button class="bt be" type="button" style="height:40px" onclick="strategyRemoveTokenRow(this)">×</button></div></div>';
+}
+function strategyTokenInputSection(containerId) {
+  return '<div style="margin-top:8px"><button class="bt by" type="button" onclick="strategyAddTokenRow(\'' +
+    containerId +
+    '\')"><span style="font-size:16px">+</span> Token hinzufügen</button><div id="' +
+    containerId +
+    '"></div></div>';
+}
+function strategyAddTokenRow(containerId, values) {
+  var container = document.getElementById(containerId);
+  if (!container) return;
+  container.insertAdjacentHTML('beforeend', strategyTokenRowHtml(values));
+}
+function strategyRemoveTokenRow(button) {
+  var row = button && button.closest ? button.closest('.strategy-token-row') : null;
+  if (row) row.remove();
+}
+function collectStrategyTokenRows(containerId) {
+  var container = document.getElementById(containerId);
+  if (!container) return { rows: [], error: '' };
+  var rows = [];
+  var error = '';
+  Array.from(container.querySelectorAll('.strategy-token-row')).forEach(function (row) {
+    var name = (row.querySelector('.strategy-token-name') || {}).value || '',
+      amountRaw = (row.querySelector('.strategy-token-amount') || {}).value || '',
+      entryRaw = (row.querySelector('.strategy-token-entry') || {}).value || '',
+      trimmedName = String(name || '').trim();
+    if (!trimmedName && amountRaw === '' && entryRaw === '') return;
+    var amount = parseFloat(amountRaw),
+      entryPrice = entryRaw === '' ? 0 : parseFloat(entryRaw);
+    if (!trimmedName) error = error || 'Tokenname erforderlich';
+    else if (!Number.isFinite(amount) || amount === 0) error = error || 'Tokenmenge muss ungleich 0 sein';
+    else if (!Number.isFinite(entryPrice) || entryPrice < 0) error = error || 'Entry-Preis ungültig';
+    else rows.push({ name: trimmedName, amount: amount, entryPrice: entryPrice });
+  });
+  return { rows: rows, error: error };
 }
 function tr(s) {
   return s.rewards.reduce((a, r) => a + r.amount, 0);
@@ -921,19 +1154,30 @@ function fetchPrices(opts) {
     tokens[modalBorrow] = CG_REV[modalBorrow];
   if (modalPegRef && CG_REV[modalPegRef])
     tokens[modalPegRef] = CG_REV[modalPegRef];
-  var ids = Object.values(tokens);
-  if (!ids.length) return;
-  fetch(
-    "https://api.coingecko.com/api/v3/simple/price?ids=" +
-      ids.join(",") +
-      "&vs_currencies=usd",
-  )
-    .then((r) => r.json())
-    .then((d) => {
-      for (var sym in tokens) {
-        var cgId = tokens[sym];
-        if (d[cgId] && d[cgId].usd) PRICES[sym] = d[cgId].usd;
-      }
+  var symbols = Object.keys(tokens);
+  if (!symbols.length) return;
+  var binanceLookup = buildBinancePriceLookup(tokens),
+    binanceFetch = binanceLookup.requestPairs.length
+      ? fetch(
+          "https://api.binance.com/api/v3/ticker/price?symbols=" +
+            encodeURIComponent(JSON.stringify(binanceLookup.requestPairs)),
+        )
+          .then(function (r) {
+            return r.ok ? r.json() : [];
+          })
+          .then(function (rows) {
+            applyBinancePriceRows(
+              binanceLookup.symbolPairs,
+              Array.isArray(rows) ? rows : [],
+            );
+          })
+          .catch(function () {})
+      : Promise.resolve();
+  binanceFetch
+    .then(function () {
+      return fetchCoinGeckoLoopPrices(tokens);
+    })
+    .then(function () {
       calcLoopData();
       refreshLoopPegQuotes();
       if (rerender) R();
@@ -1074,6 +1318,12 @@ function refreshLoopPegQuotes() {
       rerender: allowRerender,
       updatePreview: false,
     });
+    if (String(asset || '').trim().toUpperCase() === 'SAVAX') {
+      requestLoopPegQuote(asset, 'AVAX', {
+        rerender: allowRerender,
+        updatePreview: false,
+      });
+    }
   });
   var modalAsset = document.getElementById("f-lct")?.value || "",
     modalRef = (
@@ -1153,6 +1403,10 @@ function renderPegSummary(info) {
         " " +
         es(info.reference)
       : "—";
+  var setupText =
+    info.entry > 0
+      ? "Peg beim Aufsetzen = " + fmtPeg(info.entry)
+      : "Peg beim Aufsetzen = —";
   var deltaCls = info.delta > 0 ? "g" : info.delta < 0 ? "r" : "";
   var deltaText =
     info.entry > 0 && info.current > 0
@@ -1166,9 +1420,11 @@ function renderPegSummary(info) {
   return (
     '<div class="peg-box"><div class="peg-grid"><div class="peg-cell"><span class="peg-label">Peg Einstieg</span><span class="peg-value">' +
     entryText +
-    '</span></div><div class="peg-cell"><span class="peg-label">Aktueller Peg</span><span class="peg-value">' +
+    '</span></div><div class="peg-cell" style="position:relative;padding-bottom:12px"><span class="peg-label">Aktueller Peg</span><span class="peg-value">' +
     currentText +
-    '</span></div><div class="peg-cell"><span class="peg-label">Delta</span><span class="peg-value ' +
+    '</span><div style="position:absolute;left:0;right:0;bottom:0;font-size:10px;line-height:1;color:var(--t4)">(' +
+    setupText +
+    ')</div></div><div class="peg-cell"><span class="peg-label">Delta</span><span class="peg-value ' +
     deltaCls +
     '">' +
     deltaText +
@@ -1868,6 +2124,78 @@ function loopCurrentRateSummary(startAmount, currentAmount, runtimeDays, invert)
   var avgPct = days > 0 ? (nowPct / days) * 365 : null;
   return { nowPct: nowPct, avgPct: avgPct };
 }
+function loopAnnualizedRateFromChange(startValue, currentValue, runtimeDays) {
+  var start = parseFloat(startValue || 0),
+    current = parseFloat(currentValue || 0),
+    days = parseFloat(runtimeDays || 0);
+  if (!(start > 0) || !(current > 0) || !(days > 0.01)) return null;
+  return (((current - start) / start) * 100 / days) * 365;
+}
+function loopHasManualCurrentAmounts(loop) {
+  return !!(loop && (loop.currentamountsupdatedat || loop.currentAmountsUpdatedAt));
+}
+function loopSupplyAprSinceStart(loop, runtimeDays) {
+  var asset = String((loop && (loop.collateraltoken || loop.collateralToken)) || '')
+    .trim()
+    .toUpperCase();
+  if (asset !== 'SAVAX') return null;
+  var startPeg = parseFloat((loop && (loop.supplypegstart || loop.supplyPegStart)) || 0);
+  if (!(startPeg > 0)) return null;
+  var info = typeof loopPegInfo === 'function' ? loopPegInfo('SAVAX', 'AVAX', startPeg) : null,
+    source = String((info && info.source) || '').toLowerCase();
+  if (!info || !(parseFloat(info.current) > 0)) return null;
+  if (source && source.indexOf('benqi') === -1) return null;
+  var aprPct = loopAnnualizedRateFromChange(startPeg, info.current, runtimeDays);
+  if (aprPct === null) return null;
+  return { aprPct: aprPct, source: 'benqi-peg' };
+}
+function loopBorrowAprSinceStart(loop, runtimeDays) {
+  var startBorrow = parseFloat(
+      (loop && (loop.endborrowedamount || loop.endBorrowedAmount || loop.borrowedamount || loop.borrowedAmount)) || 0,
+    ),
+    currentBorrow = parseFloat(
+      (loop && (loop.currentborrowedamount || loop.currentBorrowedAmount || loop.endborrowedamount || loop.endBorrowedAmount)) || 0,
+    );
+  if (loopHasManualCurrentAmounts(loop)) {
+    var realizedApr = loopAnnualizedRateFromChange(startBorrow, currentBorrow, runtimeDays);
+    if (realizedApr !== null) return { aprPct: -Math.abs(realizedApr), source: 'current-amounts' };
+  }
+  var avgBorrowApr = parseFloat(
+    (loop && (loop.avgborrowapr || loop.avgBorrowApr || loop.borrowapy || loop.borrowApy)) || 0,
+  );
+  if (!Number.isFinite(avgBorrowApr)) return null;
+  return { aprPct: -Math.abs(avgBorrowApr), source: 'snapshot-average' };
+}
+function loopAprSinceStartSummary(loop, runtimeDays) {
+  var supply = loopSupplyAprSinceStart(loop, runtimeDays),
+    borrow = loopBorrowAprSinceStart(loop, runtimeDays);
+  if (!supply || !borrow) {
+    return {
+      available: false,
+      netApr: null,
+      supplyApr: supply ? supply.aprPct : null,
+      borrowApr: borrow ? borrow.aprPct : null,
+      supplySource: supply ? supply.source : null,
+      borrowSource: borrow ? borrow.source : null,
+    };
+  }
+  var leverage = Math.max(parseFloat((loop && loop.leverage) || 0) || 1, 1),
+    leveragedBorrow = Math.max(leverage - 1, 0),
+    netApr = leverage * supply.aprPct + leveragedBorrow * borrow.aprPct;
+  return {
+    available: true,
+    netApr: netApr,
+    supplyApr: supply.aprPct,
+    borrowApr: borrow.aprPct,
+    supplySource: supply.source,
+    borrowSource: borrow.source,
+  };
+}
+function fmtSinceStartApr(value) {
+  var numericValue = parseFloat(value);
+  if (!Number.isFinite(numericValue)) return '—';
+  return (numericValue > 0 ? '+' : '') + numericValue.toFixed(2) + '% APR';
+}
 function fmtLoopRateSummary(summary) {
   if (!summary || summary.avgPct === null)
     return 'avr. —';
@@ -1991,6 +2319,18 @@ function renderLoopDetailPanel(selLoop, nw, inline) {
       selRuntime,
       true,
     ),
+    sinceStartApr =
+      typeof loopAprSinceStartSummary === 'function'
+        ? loopAprSinceStartSummary(selLoop, selRuntime)
+        : { available: false, netApr: null, supplySource: null, borrowSource: null },
+    supplySinceStart =
+      typeof loopSupplyAprSinceStart === 'function'
+        ? loopSupplyAprSinceStart(selLoop, selRuntime)
+        : null,
+    borrowSinceStart =
+      typeof loopBorrowAprSinceStart === 'function'
+        ? loopBorrowAprSinceStart(selLoop, selRuntime)
+        : null,
     selStatus = selLoop.status || 'active',
     h = '';
   if (!inline)
@@ -2016,10 +2356,22 @@ function renderLoopDetailPanel(selLoop, nw, inline) {
     es(selLoop.collateraltoken || '') +
     '</div></div><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end"><span class="bdg ac" style="font-size:13px;padding:5px 10px">Hebel: ' +
     selTot.leverage.toFixed(2) +
-    'x</span><div class="dha" style="font-size:20px">' +
+    'x</span><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div class="dha" style="font-size:20px;color:' +
+    (sinceStartApr.available && sinceStartApr.netApr > 0
+      ? 'var(--g)'
+      : sinceStartApr.available && sinceStartApr.netApr < 0
+        ? 'var(--r)'
+        : 'var(--t3)') +
+    ';text-align:right">' +
+    (sinceStartApr.available && sinceStartApr.netApr !== null
+      ? (sinceStartApr.netApr > 0 ? '+' : '') + sinceStartApr.netApr.toFixed(2) + '%'
+      : '—') +
+    ' <span class="u">APR seit Aufsetzen</span></div><div style="font-size:12px;color:' +
+    (selTot.netApr > 0 ? 'var(--g)' : selTot.netApr < 0 ? 'var(--r)' : 'var(--t3)') +
+    ';text-align:right">' +
     (selTot.netApr > 0 ? '+' : '') +
     selTot.netApr.toFixed(2) +
-    '% <span class="u">Gehebelte APR</span></div></div></div>';
+    '% <span class="u">Gehebelte Live APR</span></div></div></div></div>';
   h +=
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px"><div style="background:var(--g-bg);padding:12px;border-radius:8px;border:1px solid var(--g);text-align:center"><div style="font-size:10px;color:var(--g);text-transform:uppercase">Supply</div><div style="font-size:15px;font-weight:600;color:var(--t);margin-top:4px">' +
     fn(postLoopSupplyAmount) +
@@ -2032,9 +2384,12 @@ function renderLoopDetailPanel(selLoop, nw, inline) {
     ';margin-top:8px;text-align:center">' +
     (selTot.supplyRateApr > 0 ? '+' : '') +
     selTot.supplyRateApr.toFixed(2) +
-    '% APR <span class="u">' +
-    fmtLoopRateSummary(supplyNow) +
-    '</span></div><div class="fg" style="margin-top:10px;text-align:left" onclick="event.stopPropagation()"><label>Aktuelle Supply-Menge</label><input id="loop-cur-supply-' +
+    '% APR</div><div style="font-size:11px;color:var(--t3);margin-top:4px;text-align:center">now: ' +
+    (selTot.supplyRateApr > 0 ? '+' : '') +
+    selTot.supplyRateApr.toFixed(2) +
+    '% APR / avr.: ' +
+    fmtSinceStartApr(supplySinceStart && supplySinceStart.aprPct) +
+    '</div><div class="fg" style="margin-top:10px;text-align:left" onclick="event.stopPropagation()"><label>Aktuelle Supply-Menge</label><input id="loop-cur-supply-' +
     selLoop.id +
     '" type="number" step="any" value="' +
     es(selLoop.currentcollateralamount || selLoop.currentCollateralAmount || selLoop.endcollateralamount || selLoop.endCollateralAmount || selLoop.startcollateralamount || selLoop.startCollateralAmount || '') +
@@ -2049,9 +2404,11 @@ function renderLoopDetailPanel(selLoop, nw, inline) {
     ';margin-top:8px;text-align:center">' +
     (selTot.borrowRateApr > 0 ? '-' : '') +
     selTot.borrowRateApr.toFixed(2) +
-    '% APR <span class="u">' +
-    fmtLoopRateSummary(borrowNow) +
-    '</span></div><div class="fg" style="margin-top:10px;text-align:left" onclick="event.stopPropagation()"><label>Aktuelle Borrow-Menge</label><input id="loop-cur-borrow-' +
+    '% APR</div><div style="font-size:11px;color:var(--t3);margin-top:4px;text-align:center">now: -' +
+    selTot.borrowRateApr.toFixed(2) +
+    '% APR / avr.: ' +
+    fmtSinceStartApr(borrowSinceStart && borrowSinceStart.aprPct) +
+    '</div><div class="fg" style="margin-top:10px;text-align:left" onclick="event.stopPropagation()"><label>Aktuelle Borrow-Menge</label><input id="loop-cur-borrow-' +
     selLoop.id +
     '" type="number" step="any" value="' +
     es(selLoop.currentborrowedamount || selLoop.currentBorrowedAmount || selLoop.endborrowedamount || selLoop.endBorrowedAmount || selLoop.borrowedamount || selLoop.borrowedAmount || '') +
@@ -3054,10 +3411,8 @@ function hCr() {
     { id: 'f-i', test: function(v){ return !isNaN(parseFloat(v)) && parseFloat(v) > 0; }, msg: 'Investition muss > 0 sein' }
   ])) return;
   var no = document.getElementById("f-no").value || "",
-    tn = document.getElementById("f-tn").value.trim(),
-    ta = parseFloat(document.getElementById("f-ta").value) || 0,
-    tp2 = parseFloat(document.getElementById("f-tp").value) || 0;
-  var tk = tn ? { name: tn, amount: ta, entryPrice: tp2 } : null;
+    tokenRead = collectStrategyTokenRows('f-token-create-rows');
+  if (tokenRead.error) return alert(tokenRead.error);
   cm();
   F("/api/strategies", {
     method: "POST",
@@ -3066,7 +3421,7 @@ function hCr() {
       startDate: new Date(d + "T" + t).toISOString(),
       investment: i,
       notes: no,
-      token: tk,
+      tokenChanges: tokenRead.rows,
     }),
   }).then(loadData);
 }
@@ -3087,17 +3442,21 @@ function hRw() {
   }).then(loadData);
 }
 function hIv() {
-  var a = parseFloat(document.getElementById("f-ni").value);
+  var rawAmount = document.getElementById("f-ni").value,
+    a = rawAmount === '' ? NaN : parseFloat(rawAmount),
+    tokenRead = collectStrategyTokenRows('f-token-invest-rows');
   if (!SI) return;
-  if (!validateFields([
-    { id: 'f-ni', test: function(v){ return v !== '' && !isNaN(parseFloat(v)); }, msg: 'Betrag erforderlich' }
-  ])) return;
+  if (tokenRead.error) return alert(tokenRead.error);
+  if (Number.isNaN(a) && !tokenRead.rows.length) {
+    return showFieldError('f-ni', 'Betrag oder Token erforderlich');
+  }
   cm();
   F("/api/strategies/" + SI + "/investment", {
     method: "POST",
     body: JSON.stringify({
-      amount: a,
+      amount: Number.isNaN(a) ? '' : a,
       note: document.getElementById("f-nin").value || "",
+      tokenChanges: tokenRead.rows,
     }),
   }).then(loadData);
 }
@@ -4611,7 +4970,7 @@ function R(options) {
     var d = db(s.startDate, isP ? s.endedAt : nw),
       a = wa(s, isP ? s.endedAt : nw),
       c = ci(s),
-      tk = s.token ? `<span class="tkb">${es(s.token.name)}</span>` : "",
+      tk = strategyTokenBadges(s),
       pv = tp(s, false),
       rw = tr(s),
       incl = stratIncl(s);
@@ -4945,8 +5304,7 @@ function R(options) {
         ? av.filter(
             (s) =>
               s.name.toLowerCase().includes(SEARCH_ACT.toLowerCase()) ||
-              (s.token &&
-                s.token.name.toLowerCase().includes(SEARCH_ACT.toLowerCase())),
+              strategyTokenSearchText(s).includes(SEARCH_ACT.toLowerCase()),
           )
         : av;
       if (!fAV.length)
@@ -5018,8 +5376,7 @@ function R(options) {
         ? pa.filter(
             (s) =>
               s.name.toLowerCase().includes(SEARCH_PAST.toLowerCase()) ||
-              (s.token &&
-                s.token.name.toLowerCase().includes(SEARCH_PAST.toLowerCase())),
+              strategyTokenSearchText(s).includes(SEARCH_PAST.toLowerCase()),
           )
         : pa;
       if (!fPA.length)
@@ -5114,19 +5471,27 @@ function R(options) {
         '</span></div><div class="dsi"><span class="dsl">Laufzeit</span><span class="dsv">' +
         _d.toFixed(1) +
         " T</span></div></div>";
+      var tokenSummary = strategyTokenSummary(se),
+        legacyTokenOnly = !!(se.token && se.token.name) && !strategyHasTokenEvents(se);
       h +=
-        '<div class="sh" style="margin-top:24px"><h3 class="st">Token</h3><button class="bt by" onclick="M.tk=1;R()">✎</button></div>';
-      if (se.token && se.token.name) {
-        h +=
-          '<div class="ibx"><div class="igr"><div class="iti"><span class="itl">Token</span><span class="itv">' +
-          es(se.token.name) +
-          '</span></div><div class="iti"><span class="itl">Menge</span><span class="itv">' +
-          fn(se.token.amount) +
-          '</span></div><div class="iti"><span class="itl">Entry</span><span class="itv">$' +
-          fn(se.token.entryPrice) +
-          '</span></div><div class="iti"><span class="itl">Wert</span><span class="itv">$' +
-          fn(se.token.amount * se.token.entryPrice) +
-          "</span></div></div></div>";
+        '<div class="sh" style="margin-top:24px"><h3 class="st">Token</h3>' +
+        (legacyTokenOnly ? '<button class="bt by" onclick="M.tk=1;R()">✎</button>' : '') +
+        '</div>';
+      if (tokenSummary.length) {
+        h += '<div style="display:grid;gap:10px">';
+        tokenSummary.forEach(function (token) {
+          h +=
+            '<div class="ibx"><div class="igr"><div class="iti"><span class="itl">Token</span><span class="itv">' +
+            es(token.name) +
+            '</span></div><div class="iti"><span class="itl">Gesamtmenge</span><span class="itv">' +
+            fn(token.amount) +
+            '</span></div><div class="iti"><span class="itl">Ø Entry</span><span class="itv">' +
+            (token.entryPrice > 0 ? '$' + fn(token.entryPrice) : '—') +
+            '</span></div><div class="iti"><span class="itl">Wert</span><span class="itv">' +
+            (token.entryPrice > 0 ? '$' + fn(token.value) : '—') +
+            '</span></div></div></div>';
+        });
+        h += '</div>';
       } else h += '<div class="ibx"><span class="nem">Kein Token</span></div>';
       h +=
         '<div class="sh" style="margin-top:24px"><h3 class="st">Notizen</h3><button class="bt bb" onclick="M.no=1;R()">✎</button></div>';
@@ -5202,11 +5567,17 @@ function R(options) {
           "</span></div></div>";
         var curN = (se.investmentHistory.find((x) => x.id === curP.id) || {})
           .note;
+        var curTokens = renderStrategyTokenChanges(se.investmentHistory.find((x) => x.id === curP.id) || {});
         if (curN)
           h +=
             '<div style="flex:1;min-width:140px;border-left:1px solid var(--bd2);padding-left:14px"><div style="font-size:10px;color:var(--t4);text-transform:uppercase;margin-bottom:2px">Notiz:</div><div style="font-size:12px;color:var(--t2);line-height:1.4">' +
             es(curN) +
             "</div></div>";
+        if (curTokens)
+          h +=
+            '<div style="flex-basis:100%;margin-top:10px"><div style="font-size:10px;color:var(--t4);text-transform:uppercase;margin-bottom:4px">Tokenänderungen</div><div>' +
+            curTokens +
+            '</div></div>';
         h += "</div></div></div></div>";
       }
       if (prevPs.length > 0) {
@@ -5282,11 +5653,17 @@ function R(options) {
               "</span></div></div>";
             var invN = (se.investmentHistory.find((x) => x.id === p.id) || {})
               .note;
+            var invTokens = renderStrategyTokenChanges(se.investmentHistory.find((x) => x.id === p.id) || {});
             if (invN)
               h +=
                 '<div style="flex:1;min-width:140px;border-left:1px solid var(--bd2);padding-left:14px"><div style="font-size:10px;color:var(--t4);text-transform:uppercase;margin-bottom:2px">Notiz:</div><div style="font-size:12px;color:var(--t2);line-height:1.4">' +
                 es(invN) +
                 "</div></div>";
+            if (invTokens)
+              h +=
+                '<div style="flex-basis:100%;margin-top:10px"><div style="font-size:10px;color:var(--t4);text-transform:uppercase;margin-bottom:4px">Tokenänderungen</div><div>' +
+                invTokens +
+                '</div></div>';
             h += "</div></div></div>";
           });
         h += "</div>";
@@ -6325,7 +6702,7 @@ function R(options) {
 
   if (M.cr) {
     h +=
-      '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Neue Strategie</div><div class="fg"><label>Name</label><input id="f-n" placeholder="z.B. Aave USDC"></div><div class="fr"><div class="fg"><label>Startdatum</label><input id="f-d" type="date" value="' + fds(new Date()) + '"></div><div class="fg"><label>Uhrzeit</label><input id="f-t" type="time" value="' + fts(new Date()) + '"></div></div><div class="fg"><label>Investment (USDC)</label><input id="f-i" type="number" step="0.01"></div><div style="font-size:11px;color:var(--t4);margin:8px 0 6px">Token (optional)</div><div class="fr"><div class="fg"><label>Token</label><input id="f-tn"></div><div class="fg"><label>Menge</label><input id="f-ta" type="number" step="any"></div><div class="fg"><label>Entry ($)</label><input id="f-tp" type="number" step="any"></div></div><div class="fg"><label>Notizen</label><textarea id="f-no" rows="2"></textarea></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hCr()">Erstellen</button></div></div></div>';
+      '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Neue Strategie</div><div class="fg"><label>Name</label><input id="f-n" placeholder="z.B. Aave USDC"></div><div class="fr"><div class="fg"><label>Startdatum</label><input id="f-d" type="date" value="' + fds(new Date()) + '"></div><div class="fg"><label>Uhrzeit</label><input id="f-t" type="time" value="' + fts(new Date()) + '"></div></div><div class="fg"><label>Investment (USDC)</label><input id="f-i" type="number" step="0.01"></div><div style="font-size:11px;color:var(--t4);margin:8px 0 6px">Token (optional)</div>' + strategyTokenInputSection('f-token-create-rows') + '<div class="fg"><label>Notizen</label><textarea id="f-no" rows="2"></textarea></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hCr()">Erstellen</button></div></div></div>';
   }
   if (M.rw) {
     h +=
@@ -6335,7 +6712,7 @@ function R(options) {
     h +=
       '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Investment ändern</div><div class="hnt">Aktuell: ' +
       fn(ci(se)) +
-      '</div><div class="fg"><label>Investment hinzufügen / abziehen (USDC)</label><input id="f-ni" type="number" step="0.01"></div><div class="hnt">Positive Werte addieren zum Investment, negative Werte ziehen davon ab.</div><div class="fg"><label>Notiz</label><input id="f-nin"></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hIv()">Buchen</button></div></div></div>';
+      '</div><div class="fg"><label>Investment hinzufügen / abziehen (USDC)</label><input id="f-ni" type="number" step="0.01"></div><div class="hnt">Positive Werte addieren zum Investment, negative Werte ziehen davon ab.</div><div style="font-size:11px;color:var(--t4);margin:8px 0 6px">Tokenänderungen (optional)</div>' + strategyTokenInputSection('f-token-invest-rows') + '<div class="fg"><label>Notiz</label><input id="f-nin"></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hIv()">Buchen</button></div></div></div>';
   }
   if (M.pl) {
     h +=
@@ -6965,7 +7342,9 @@ for (const [key, descriptor] of Object.entries(legacyBindings)) {
 const _legacyRegistry = {
   setPgAct, setPgPast, setPgFrfO, setPgFrfC, uiKey, saveUi, restoreUi, normUi,
   cm, tgl, fd, fds, fts, db, calcApr, fn, fpr, es, onlineMeta, onlineBadge,
-  ci, tr, posFloatingPnl, posPnl, tp, tg, bp, wa,
+  ci, strategyHasTokenEvents, strategyTokenEntries, strategyTokenSummary, strategyTokenSearchText,
+  strategyTokenBadges, renderStrategyTokenChanges, strategyTokenRowHtml, strategyTokenInputSection,
+  strategyAddTokenRow, strategyRemoveTokenRow, collectStrategyTokenRows, tr, posFloatingPnl, posPnl, tp, tg, bp, wa,
   stratIncl, sortDirMul, cmpText, cmpNumber, sortIndicator, sortableHeader,
   toggleStrategySort, toggleFrfSort, sortStrategies, frfAprForSort, frfTotalApr, sortFrf,
   exMargin, exName, latestFunding, posIncl, runningFunding, posLiveSize, posEntrySize, posCapital,
@@ -6978,7 +7357,8 @@ const _legacyRegistry = {
   verifyCooldownText, resendVerifyMail, dBack, rBack, hNewProf, delProf,
   loadAdmin, adminTgl, adminFeatTgl, adminDel, adminRole, loadFeatures, hSupport,
   loopPayloadFromForm, loopTokenPrice, calculateLoopingTotals, loopSupplyValue,
-  loopBorrowValue, loopBorrowTokenAmount, loopLeverage, loopNetApr, calcLoopData,
+  loopBorrowValue, loopBorrowTokenAmount, loopLeverage, loopNetApr, loopAnnualizedRateFromChange,
+  loopHasManualCurrentAmounts, loopSupplyAprSinceStart, loopBorrowAprSinceStart, loopAprSinceStartSummary, calcLoopData,
   hLoopCr, openLoopDetail, openLoopEdit, hLoopUpd, saveLoopCurrentAmounts, closeLoop, updateLoopName, renderLoopModal,
   hFeature, hVote, openAdminDetail, renderAdminChart,
   endS, reaS, delS, delR, delP, togP, togStratApr, doUndo,

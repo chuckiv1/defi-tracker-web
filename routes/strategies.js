@@ -1,6 +1,34 @@
 function registerStrategyRoutes(app, deps) {
   const { attachProfile, express, gid, requireAuth, saveProfile, svU } = deps;
 
+  function normalizeTokenChangesInput(body) {
+    const directRows = Array.isArray(body && body.tokenChanges) ? body.tokenChanges : [];
+    const legacyToken = body && body.token && body.token.name ? [body.token] : [];
+    return [...directRows, ...legacyToken]
+      .map((entry) => {
+        const name = String((entry && entry.name) || '').trim();
+        const amount = parseFloat(entry && entry.amount);
+        const entryPrice = parseFloat(entry && entry.entryPrice);
+        if (!name && !Number.isFinite(amount) && !Number.isFinite(entryPrice)) return null;
+        return {
+          id: gid(),
+          name,
+          amount: Number.isFinite(amount) ? amount : NaN,
+          entryPrice: Number.isFinite(entryPrice) ? entryPrice : 0,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function validateTokenChanges(tokenChanges) {
+    for (const entry of tokenChanges) {
+      if (!entry.name) return 'Tokenname erforderlich';
+      if (!Number.isFinite(entry.amount) || entry.amount === 0) return 'Tokenmenge muss ungleich 0 sein';
+      if (!Number.isFinite(entry.entryPrice) || entry.entryPrice < 0) return 'Entry-Preis ungültig';
+    }
+    return '';
+  }
+
   app.get('/api/undo', requireAuth, attachProfile, (req, res) => {
     res.json(req.profile.undo.map((entry, index) => ({ index, label: entry.label, time: entry.time })));
   });
@@ -30,9 +58,12 @@ function registerStrategyRoutes(app, deps) {
     try {
       const investment = parseFloat(req.body.investment);
       if (Number.isNaN(investment)) return res.status(400).json({ error: 'Ungültiges Investment' });
+      const tokenChanges = normalizeTokenChangesInput(req.body);
+      const tokenError = validateTokenChanges(tokenChanges);
+      if (tokenError) return res.status(400).json({ error: tokenError });
       svU(req, 'Neue Strategie');
       const data = req.profile.data;
-      data.push({ id: gid(), name: String(req.body.name || '').slice(0, 200), startDate: req.body.startDate, notes: req.body.notes || '', token: req.body.token || null, includeInTotalApr: true, investmentHistory: [{ id: gid(), amount: investment, date: req.body.startDate, note: '' }], rewards: [], pnl: [], endedAt: null });
+      data.push({ id: gid(), name: String(req.body.name || '').slice(0, 200), startDate: req.body.startDate, notes: req.body.notes || '', token: tokenChanges.length ? null : (req.body.token || null), includeInTotalApr: true, investmentHistory: [{ id: gid(), amount: investment, date: req.body.startDate, note: '', tokenChanges }], rewards: [], pnl: [], endedAt: null });
       req.profile.data = data;
       await saveProfile(req);
       res.json(data[data.length - 1]);
@@ -79,10 +110,14 @@ function registerStrategyRoutes(app, deps) {
     try {
       const strategy = req.profile.data.find((item) => item.id === req.params.id);
       if (!strategy) return res.status(404).json({ error: 'Nicht gefunden' });
-      const amount = parseFloat(req.body.amount);
-      if (Number.isNaN(amount)) return res.status(400).json({ error: 'Ungültiger Betrag' });
+      const tokenChanges = normalizeTokenChangesInput(req.body);
+      const tokenError = validateTokenChanges(tokenChanges);
+      if (tokenError) return res.status(400).json({ error: tokenError });
+      const parsedAmount = parseFloat(req.body.amount);
+      const amount = Number.isFinite(parsedAmount) ? parsedAmount : 0;
+      if (Number.isNaN(parsedAmount) && !tokenChanges.length) return res.status(400).json({ error: 'Ungültiger Betrag' });
       svU(req, 'Invest+');
-      strategy.investmentHistory.push({ id: gid(), amount, date: new Date().toISOString(), note: req.body.note || '' });
+      strategy.investmentHistory.push({ id: gid(), amount, date: new Date().toISOString(), note: req.body.note || '', tokenChanges });
       await saveProfile(req);
       res.json(strategy);
     } catch (error) {

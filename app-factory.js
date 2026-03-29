@@ -17,7 +17,7 @@ const validation = require('./services/validation');
 const { createMailService } = require('./services/mail');
 const { createExchangeService } = require('./services/exchanges');
 const { createAuthMiddleware } = require('./middleware/auth');
-const { applyAuthRateLimiters, checkAndReportLoginAttempt, createAuthLimiter, createExternalApiLimiter, onFailedLogin, resetLoginAttempt } = require('./middleware/rateLimiter');
+const { applyAuthRateLimiters, createAuthLimiter } = require('./middleware/rateLimiter');
 const { registerAuthRoutes } = require('./routes/auth');
 const { registerProfileRoutes } = require('./routes/profiles');
 const { registerLoopRoutes } = require('./routes/loops');
@@ -153,7 +153,6 @@ app.use(cookieParser());
 app.set('trust proxy', 1);
 
 const authLimiter = createAuthLimiter(rateLimit);
-const externalApiLimiter = createExternalApiLimiter(rateLimit);
 applyAuthRateLimiters(app, authLimiter);
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -219,39 +218,26 @@ function cacheSet(key, value, ttlMs = EXCHANGE_CACHE_MS) {
   exchangeLookupCache.set(key, { value, expiresAt: Date.now() + ttlMs });
   return value;
 }
-const DEFAULT_EXTERNAL_TIMEOUT_MS = 5000;
 async function fetchJson(url, options = {}) {
-  const abortController = new AbortController();
-  const timeoutId = setTimeout(() => abortController.abort(), options.timeout || DEFAULT_EXTERNAL_TIMEOUT_MS);
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      accept: 'application/json',
+      ...(options.headers || {})
+    }
+  });
+  const text = await response.text();
+  let data = null;
   try {
-    const response = await fetch(url, {
-      ...options,
-      signal: abortController.signal,
-      headers: {
-        accept: 'application/json',
-        ...(options.headers || {})
-      }
-    });
-    clearTimeout(timeoutId);
-    const text = await response.text();
-    let data = null;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch (error) {
-      throw new Error(`Ungueltige Antwort von ${url}`);
-    }
-    if (!response.ok) {
-      const message = data && (data.error || data.message || data.retMsg) ? String(data.error || data.message || data.retMsg) : `HTTP ${response.status}`;
-      throw new Error(message);
-    }
-    return data;
+    data = text ? JSON.parse(text) : null;
   } catch (error) {
-    clearTimeout(timeoutId);
-    if (error.name === 'AbortError') {
-      throw new Error(`Timeout beim Zugriff auf ${url}`);
-    }
-    throw error;
+    throw new Error(`Ungueltige Antwort von ${url}`);
   }
+  if (!response.ok) {
+    const message = data && (data.error || data.message || data.retMsg) ? String(data.error || data.message || data.retMsg) : `HTTP ${response.status}`;
+    throw new Error(message);
+  }
+  return data;
 }
 function normalizeExchangeProvider(name) {
   const value = String(name || '').trim().toLowerCase();
@@ -1130,23 +1116,11 @@ async function saveProfile(req) {
   ]);
 }
 
-async function logAuditEvent({ action, actorId, targetId, tableRef, beforeData = null, afterData = null, req }) {
-  try {
-    await db.query(
-      'INSERT INTO audit_logs (id, action, actorId, targetId, tableRef, beforeData, afterData, ip, userAgent) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-      [gid(), action, actorId || null, targetId || null, tableRef, beforeData ? JSON.stringify(beforeData) : null, afterData ? JSON.stringify(afterData) : null, req?.ip || null, req?.headers?.['user-agent'] || null]
-    );
-  } catch (error) {
-    console.error('audit log error:', error);
-  }
-}
-
 registerAuthRoutes(app, {
   APP_URL,
   SESSION_COOKIE,
   SESSION_COOKIE_OPTS,
   VERIFY_RESEND_LIMIT_MS,
-  checkAndReportLoginAttempt,
   crypto,
   db,
   gid,
@@ -1154,8 +1128,6 @@ registerAuthRoutes(app, {
   jwt,
   jwtSecret: JWT_SECRET,
   normalizeRole,
-  onFailedLogin,
-  resetLoginAttempt,
   sendMail: mailService.sendMail,
   timingSafeCompare,
   touchPresence,
@@ -1163,11 +1135,20 @@ registerAuthRoutes(app, {
 });
 
 registerProfileRoutes(app, { db, gid, requireAuth });
-registerLoopRoutes(app, { attachProfile, db, gid, normalizeLoopTokenInput: validation.normalizeLoopTokenInput, requireAuth });
-registerAdminRoutes(app, { db, hasRole, logAuditEvent, normalizeRole, requireAdmin, VALID_ROLES: validation.VALID_ROLES, validateRole: validation.validateRole });
+registerLoopRoutes(app, {
+  attachProfile,
+  benqiProvider,
+  db,
+  gid,
+  normalizeLoopTokenInput: validation.normalizeLoopTokenInput,
+  oracle,
+  requireAuth,
+});
+registerAdminRoutes(app, { db, hasRole, normalizeRole, requireAdmin });
 registerMessageRoutes(app, {
   MESSAGE_SEGMENTS: validation.MESSAGE_SEGMENTS,
   db,
+  flushScheduledMessages,
   getEditableMessageForSender,
   getMessageRecipients,
   getMessageStats,
@@ -1177,43 +1158,11 @@ registerMessageRoutes(app, {
   mapMessageRow,
   mirrorMessageToRecipients,
   normalizeMessagePayload: validation.normalizeMessagePayload,
-  requireAdmin,
   requireAuth,
   requireSupport,
 });
-
-// Background worker: dispatch scheduled messages every 5 minutes
-const SCHEDULED_MESSAGE_INTERVAL_MS = 5 * 60 * 1000;
-async function dispatchScheduledMessages() {
-  try {
-    const { rows } = await db.query(
-      "SELECT * FROM messages WHERE status = 'scheduled' AND scheduledAt <= CURRENT_TIMESTAMP LIMIT 100 FOR UPDATE SKIP LOCKED"
-    );
-    if (!rows.length) return;
-
-    await db.query('UPDATE messages SET status = $1, sentAt = CURRENT_TIMESTAMP WHERE id = ANY($2::text[])', ['sent', rows.map(r => r.id)]);
-
-    for (const msg of rows) {
-      try {
-        const recipients = await getMessageRecipients(msg.senderaccountid, msg.targettype, msg.targetaccountid, msg.audiencerpreset);
-        if (recipients.length) {
-          await Promise.all(recipients.map(r => db.query(
-            'INSERT INTO message_recipients (messageId, accountId) VALUES ($1, $2) ON CONFLICT (messageId, accountId) DO NOTHING',
-            [msg.id, r.id]
-          )));
-          await mirrorMessageToRecipients(msg, recipients);
-        }
-      } catch (err) {
-        console.error('dispatchScheduledMessages: error dispatching message', msg.id, err);
-      }
-    }
-  } catch (error) {
-    console.error('dispatchScheduledMessages error:', error);
-  }
-}
-setInterval(dispatchScheduledMessages, SCHEDULED_MESSAGE_INTERVAL_MS);
 registerBackupRoutes(app, { attachProfile, isValidFrfPayload: validation.isValidFrfPayload, isValidStrategy: validation.isValidStrategy, requireAuth, saveProfile });
-registerOracleRoutes(app, { benqiProvider, externalApiLimiter, normalizeLoopTokenInput: validation.normalizeLoopTokenInput, oracle, requireAuth });
+registerOracleRoutes(app, { benqiProvider, normalizeLoopTokenInput: validation.normalizeLoopTokenInput, oracle, requireAuth });
 // ============================================
 // DEMO API (Unauthenticated)
 // ============================================
@@ -1377,7 +1326,6 @@ registerStrategyRoutes(app, { attachProfile, express, gid, requireAuth, saveProf
 registerFrfRoutes(app, {
   attachProfile,
   express,
-  externalApiLimiter,
   getExchangeFunding: exchangeService.getExchangeFunding,
   getExchangeQuote: exchangeService.getExchangeQuote,
   getFrfSpotFallback: exchangeService.getFrfSpotFallback,

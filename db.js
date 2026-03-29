@@ -114,6 +114,9 @@ async function initDB() {
         notes TEXT,
         pegReferenceToken VARCHAR(50),
         pegEntryPrice NUMERIC,
+        supplyPegStart NUMERIC,
+        supplyPegStartAt TIMESTAMP,
+        currentAmountsUpdatedAt TIMESTAMP,
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
@@ -123,6 +126,21 @@ async function initDB() {
       ALTER TABLE loops ADD COLUMN IF NOT EXISTS pegEntryPrice NUMERIC;
       ALTER TABLE loops ADD COLUMN IF NOT EXISTS currentCollateralAmount NUMERIC DEFAULT 0;
       ALTER TABLE loops ADD COLUMN IF NOT EXISTS currentBorrowedAmount NUMERIC DEFAULT 0;
+      ALTER TABLE loops ADD COLUMN IF NOT EXISTS supplyPegStart NUMERIC;
+      ALTER TABLE loops ADD COLUMN IF NOT EXISTS supplyPegStartAt TIMESTAMP;
+      ALTER TABLE loops ADD COLUMN IF NOT EXISTS currentAmountsUpdatedAt TIMESTAMP;
+
+      CREATE TABLE IF NOT EXISTS loop_borrow_rate_snapshots (
+        id VARCHAR(50) PRIMARY KEY,
+        loopId VARCHAR(50) REFERENCES loops(id) ON DELETE CASCADE,
+        profileId VARCHAR(50) REFERENCES profiles(id) ON DELETE CASCADE,
+        capturedAt TIMESTAMP NOT NULL,
+        borrowApr NUMERIC NOT NULL,
+        source VARCHAR(50),
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_loop_borrow_rate_snapshots_loop ON loop_borrow_rate_snapshots(loopId, capturedAt DESC);
 
       CREATE TABLE IF NOT EXISTS loop_updates (
         id VARCHAR(50) PRIMARY KEY,
@@ -174,6 +192,15 @@ async function initDB() {
       CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversationId, createdAt ASC);
       CREATE INDEX IF NOT EXISTS idx_message_recipients_account ON message_recipients(accountId, readAt);
     `);
+
+    await pool.query(`
+      UPDATE loops
+      SET supplyPegStart = 1.2517,
+          supplyPegStartAt = COALESCE(startDate, createdAt, CURRENT_TIMESTAMP)
+      WHERE UPPER(collateralToken) = 'SAVAX'
+        AND supplyPegStart IS NULL
+    `);
+
     await applyBootstrapRoles();
     console.log('Database initialized successfully.');
   } catch (err) {
