@@ -14,7 +14,7 @@ function createExternalApiLimiter(rateLimit) {
     max: 30,
     standardHeaders: true,
     legacyHeaders: false,
-    keyGenerator: (req) => req.account?.id || req.ip,
+    keyGenerator: (req) => req.account?.id || rateLimit.ipKeyGenerator(req.ip),
     handler: (req, res) => {
       res.status(429).json({ error: 'Zu viele Anfragen an externe APIs. Bitte warte eine Minute.' });
     }
