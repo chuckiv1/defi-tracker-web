@@ -1145,7 +1145,14 @@ registerLoopRoutes(app, {
   oracle,
   requireAuth,
 });
-registerAdminRoutes(app, { db, hasRole, normalizeRole, requireAdmin });
+registerAdminRoutes(app, {
+  db,
+  hasRole,
+  normalizeRole,
+  requireAdmin,
+  VALID_ROLES: validation.VALID_ROLES,
+  validateRole: validation.validateRole,
+});
 registerMessageRoutes(app, {
   MESSAGE_SEGMENTS: validation.MESSAGE_SEGMENTS,
   db,
@@ -1454,13 +1461,16 @@ process.on('uncaughtException', (err) => {
 
 // Graceful Shutdown
 const variationalFundingTimer = setInterval(() => { exchangeService.captureTrackedVariationalFunding().catch(() => {}); }, VARIATIONAL_FUNDING_CAPTURE_MS);
+const scheduledMessageTimer = setInterval(() => { flushScheduledMessages().catch((error) => console.error('scheduled message flush:', error.message)); }, 30000);
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 DeFi Vault Server läuft auf Port ${PORT} (PostgreSQL+JWT)`);
   exchangeService.captureTrackedVariationalFunding().catch(() => {});
+  flushScheduledMessages().catch((error) => console.error('scheduled message flush:', error.message));
 });
 function gracefulShutdown(signal) {
   console.log(`\n${signal} empfangen. Fahre Server herunter...`);
   clearInterval(variationalFundingTimer);
+  clearInterval(scheduledMessageTimer);
   server.close(() => {
     db.pool.end().then(() => {
       console.log('DB-Pool geschlossen. Server beendet.');

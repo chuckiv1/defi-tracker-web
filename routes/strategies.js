@@ -29,6 +29,22 @@ function registerStrategyRoutes(app, deps) {
     return '';
   }
 
+  function normalizeStrategyToken(body) {
+    if (!body || !body.name) return null;
+    const tokenChanges = normalizeTokenChangesInput({ tokenChanges: [body] });
+    const tokenError = validateTokenChanges(tokenChanges);
+    if (tokenError) return { tokenError };
+    const token = tokenChanges[0];
+    return {
+      token: {
+        name: token.name,
+        amount: token.amount,
+        entryPrice: token.entryPrice,
+      },
+      tokenError: '',
+    };
+  }
+
   app.get('/api/undo', requireAuth, attachProfile, (req, res) => {
     res.json(req.profile.undo.map((entry, index) => ({ index, label: entry.label, time: entry.time })));
   });
@@ -96,7 +112,13 @@ function registerStrategyRoutes(app, deps) {
       if (req.params.action === 'reactivate') strategy.endedAt = null;
       if (req.params.action === 'enddate') strategy.endedAt = req.body.endedAt || new Date().toISOString();
       if (req.params.action === 'notes') strategy.notes = req.body.notes || '';
-      if (req.params.action === 'token') strategy.token = req.body.name ? { name: req.body.name, amount: parseFloat(req.body.amount) || 0, entryPrice: parseFloat(req.body.entryPrice) || 0 } : null;
+      if (req.params.action === 'token') {
+        const normalizedToken = normalizeStrategyToken(req.body);
+        if (normalizedToken && normalizedToken.tokenError) {
+          return res.status(400).json({ error: normalizedToken.tokenError });
+        }
+        strategy.token = normalizedToken ? normalizedToken.token : null;
+      }
       if (req.params.action === 'toggle-total-apr') strategy.includeInTotalApr = !strategy.includeInTotalApr;
       await saveProfile(req);
       res.json(strategy);

@@ -132,7 +132,7 @@ function registerAuthRoutes(app, deps) {
 
   app.post('/api/auth/login', async (req, res) => {
     try {
-      const { email, password, rememberMe } = req.body;
+      const { email, password, rememberMe } = req.body || {};
       if (!email || !password) return res.status(400).json({ error: 'E-Mail und Passwort erforderlich' });
       const { rows } = await db.query('SELECT * FROM accounts WHERE LOWER(email) = LOWER($1)', [email]);
       if (rows.length === 0) return res.status(401).json({ error: 'Falsche E-Mail oder Passwort' });
@@ -180,3 +180,4 @@ function registerAuthRoutes(app, deps) {
 }
 
 module.exports = { registerAuthRoutes };
+ { registerAuthRoutes };

@@ -1,12 +1,17 @@
 function registerFrfRoutes(app, deps) {
-  const { attachProfile, express, externalApiLimiter, getExchangeFunding, getExchangeQuote, getFrfSpotFallback, gid, profileExchangeById, requireAuth, saveProfile, searchSymbolsForExchange, svU } = deps;
+  const { attachProfile, express, getExchangeFunding, getExchangeQuote, getFrfSpotFallback, gid, profileExchangeById, requireAuth, saveProfile, searchSymbolsForExchange, svU } = deps;
+
+  function parseRequiredNumber(value) {
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : NaN;
+  }
 
   app.get('/api/frf', requireAuth, attachProfile, (req, res) => { res.json(req.profile.frf); });
 
   const router = express.Router();
   app.use('/api', requireAuth, attachProfile, router);
 
-  router.get('/frf/exchanges/:id/symbols', externalApiLimiter, async (req, res) => {
+  router.get('/frf/exchanges/:id/symbols', async (req, res) => {
     try {
       const exchangeId = String(req.params.id || '').trim().slice(0, 100);
       const query = String(req.query.q || '').trim().slice(0, 30);
@@ -21,7 +26,7 @@ function registerFrfRoutes(app, deps) {
     }
   });
 
-  router.get('/frf/positions/:id/live', externalApiLimiter, async (req, res) => {
+  router.get('/frf/positions/:id/live', async (req, res) => {
     try {
       const positionId = String(req.params.id || '').trim().slice(0, 100);
       if (!positionId) return res.status(400).json({ error: 'Position erforderlich' });
@@ -45,6 +50,7 @@ function registerFrfRoutes(app, deps) {
         shortData = { exchangeName: shortExchange ? shortExchange.name : 'Short', error: error.message || 'Short-Livepreis fehlgeschlagen', funding: null, entryPrice: shortEntry, pnl: 0 };
       }
       try {
+        if (!position.longIsSpot && !longExchange) throw new Error('Long-Boerse nicht gefunden');
         const quote = position.longIsSpot ? await getFrfSpotFallback(position.longMarketSymbol || position.token, shortExchange ? shortExchange.name : '', shortData && !shortData.error ? shortData : null) : await getExchangeQuote(longExchange ? longExchange.name : '', position.longMarketSymbol || position.token, 'perp');
         const funding = position.longIsSpot ? null : await getExchangeFunding(longExchange ? longExchange.name : '', position.longMarketSymbol || position.token, 'perp');
         longData = { ...quote, funding, exchangeName: position.longIsSpot ? (quote.exchangeName || 'Spot') : quote.exchangeName, entryPrice: longEntry, pnl: tokenAmount > 0 && longEntry > 0 && quote.price > 0 ? (quote.price - longEntry) * tokenAmount : 0 };
@@ -58,7 +64,26 @@ function registerFrfRoutes(app, deps) {
     }
   });
 
-  router.post('/frf/exchanges', async (req, res) => { try { svU(req, 'Börse+'); const frf = req.profile.frf; frf.exchanges.push({ id: gid(), name: String(req.body.name || '').slice(0, 100), marginHistory: [{ id: gid(), amount: parseFloat(req.body.margin) || 0, date: new Date().toISOString(), note: 'Ersteinzahlung' }] }); await saveProfile(req); res.json(frf); } catch (error) { console.error('exchange create:', error.message); res.status(500).json({ error: 'Fehler' }); } });
+  router.post('/frf/exchanges', async (req, res) => {
+    try {
+      const name = String(req.body.name || '').trim().slice(0, 100);
+      const margin = parseRequiredNumber(req.body.margin);
+      if (!name) return res.status(400).json({ error: 'Börsenname erforderlich' });
+      if (Number.isNaN(margin)) return res.status(400).json({ error: 'Ungültiger Margin-Betrag' });
+      svU(req, 'Börse+');
+      const frf = req.profile.frf;
+      frf.exchanges.push({
+        id: gid(),
+        name,
+        marginHistory: [{ id: gid(), amount: margin, date: new Date().toISOString(), note: 'Ersteinzahlung' }],
+      });
+      await saveProfile(req);
+      res.json(frf);
+    } catch (error) {
+      console.error('exchange create:', error.message);
+      res.status(500).json({ error: 'Fehler' });
+    }
+  });
   router.delete('/frf/exchanges/:id', async (req, res) => { try { svU(req, 'Börse del'); const frf = req.profile.frf; frf.exchanges = frf.exchanges.filter((item) => item.id !== req.params.id); await saveProfile(req); res.json(frf); } catch (error) { console.error('exchange del:', error.message); res.status(500).json({ error: 'Fehler' }); } });
   router.post('/frf/exchanges/:id/margin', async (req, res) => { try { const frf = req.profile.frf; const exchange = frf.exchanges.find((item) => item.id === req.params.id); if (!exchange) return res.status(404).json({ error: 'Börse nicht gefunden' }); const amount = parseFloat(req.body.amount); if (Number.isNaN(amount)) return res.status(400).json({ error: 'Ungültiger Betrag' }); svU(req, 'Margin+'); exchange.marginHistory.push({ id: gid(), amount, date: new Date().toISOString(), note: req.body.note || '' }); await saveProfile(req); res.json(frf); } catch (error) { console.error('margin:', error.message); res.status(500).json({ error: 'Fehler' }); } });
 
@@ -67,7 +92,7 @@ function registerFrfRoutes(app, deps) {
     const frf = req.profile.frf;
     const exchange = frf.exchanges.find((item) => item.id === req.params.id);
     if (!exchange) return res.status(404).json({ error: 'Boerse nicht gefunden' });
-    if (typeof req.body.name === 'string' && req.body.name.trim()) exchange.name = req.body.name.trim();
+    if (typeof req.body.name === 'string' && req.body.name.trim()) exchange.name = req.body.name.trim().slice(0, 100);
     const margin = parseFloat(req.body.margin);
     if (!Number.isNaN(margin)) {
       const current = (exchange.marginHistory || []).reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
@@ -112,7 +137,7 @@ function registerFrfRoutes(app, deps) {
   router.post('/frf/positions', async (req, res) => {
     svU(req, 'Pos+');
     const frf = req.profile.frf;
-    frf.positions.push({ id: gid(), type: req.body.type, token: req.body.token, coingeckoId: req.body.coingeckoId || '', shortAssetSymbol: req.body.shortAssetSymbol || req.body.token || '', longAssetSymbol: req.body.longAssetSymbol || req.body.token || '', shortMarketSymbol: req.body.shortMarketSymbol || req.body.token || '', longMarketSymbol: req.body.longMarketSymbol || req.body.token || '', tokenAmount: parseFloat(req.body.tokenAmount) || 0, positionSizeUsd: parseFloat(req.body.positionSizeUsd) || 0, entryPriceShort: parseFloat(req.body.entryPriceShort) || 0, entryPriceLong: parseFloat(req.body.entryPriceLong) || 0, shortExchangeId: req.body.shortExchangeId, longExchangeId: req.body.longExchangeId, longIsSpot: req.body.longIsSpot, fees: parseFloat(req.body.fees) || 0, linkedStrategyId: req.body.linkedStrategyId || '', linkedLoopId: req.body.linkedLoopId || '', startDate: req.body.startDate || new Date().toISOString(), endedAt: null, closePnlShort: null, closePnlLong: null, closeNote: '', manualPrice: 0, useManualPrice: false, includeInStrategy: false, excluded: false, fundingShort: [], fundingLong: [] });
+    frf.positions.push({ id: gid(), type: req.body.type, token: req.body.token, coingeckoId: req.body.coingeckoId || '', shortAssetSymbol: req.body.shortAssetSymbol || req.body.token || '', longAssetSymbol: req.body.longAssetSymbol || req.body.token || '', shortMarketSymbol: req.body.shortMarketSymbol || req.body.token || '', longMarketSymbol: req.body.longMarketSymbol || req.body.token || '', tokenAmount: parseFloat(req.body.tokenAmount) || 0, positionSizeUsd: parseFloat(req.body.positionSizeUsd) || 0, entryPriceShort: parseFloat(req.body.entryPriceShort) || 0, entryPriceLong: parseFloat(req.body.entryPriceLong) || 0, shortExchangeId: req.body.shortExchangeId, longExchangeId: req.body.longExchangeId, longIsSpot: req.body.longIsSpot, fees: parseFloat(req.body.fees) || 0, linkedStrategyId: req.body.linkedStrategyId || '', linkedLoopId: req.body.linkedLoopId || '', startDate: req.body.startDate || new Date().toISOString(), endedAt: null, closePnlShort: null, closePnlLong: null, closePnlIncludesFunding: false, closeNote: '', manualPrice: 0, useManualPrice: false, includeInStrategy: false, excluded: false, fundingShort: [], fundingLong: [] });
     await saveProfile(req);
     res.json(frf);
   });
@@ -139,6 +164,7 @@ function registerFrfRoutes(app, deps) {
     if (typeof req.body.longExchangeId === 'string') position.longExchangeId = req.body.longExchangeId;
     if (typeof req.body.longIsSpot === 'boolean') position.longIsSpot = req.body.longIsSpot;
     if (!Number.isNaN(parseFloat(req.body.fees))) position.fees = parseFloat(req.body.fees);
+    if (typeof req.body.closePnlIncludesFunding === 'boolean') position.closePnlIncludesFunding = req.body.closePnlIncludesFunding;
     if (typeof req.body.linkedStrategyId === 'string') position.linkedStrategyId = req.body.linkedStrategyId;
     if (typeof req.body.linkedLoopId === 'string') position.linkedLoopId = req.body.linkedLoopId;
     if (req.body.startDate) {
@@ -158,6 +184,7 @@ function registerFrfRoutes(app, deps) {
       position.endedAt = new Date().toISOString();
       position.closePnlShort = parseFloat(req.body.closePnlShort) || 0;
       position.closePnlLong = parseFloat(req.body.closePnlLong) || 0;
+      position.closePnlIncludesFunding = !!req.body.closePnlIncludesFunding;
       position.fees = parseFloat(req.body.fees) || 0;
       position.closeNote = req.body.closeNote || '';
       if (position.closePnlShort !== 0 && position.shortExchangeId) { const exchange = frf.exchanges.find((item) => item.id === position.shortExchangeId); if (exchange) exchange.marginHistory.push({ id: gid(), amount: position.closePnlShort, date: position.endedAt, note: `Auto-Close PNL: ${position.token}` }); }

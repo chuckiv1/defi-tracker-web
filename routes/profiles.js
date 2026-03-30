@@ -29,8 +29,13 @@ function registerProfileRoutes(app, deps) {
 
   app.delete('/api/profiles/:id', requireAuth, async (req, res) => {
     try {
-      if (req.params.id === req.account.id) return res.status(400).json({ error: 'Eigenes Profil kann nicht gelöscht werden' });
-      await db.query('DELETE FROM profiles WHERE id = $1 AND accountid = $2', [req.params.id, req.account.id]);
+      const { rows } = await db.query('SELECT COUNT(*)::int AS count FROM profiles WHERE accountid = $1', [req.account.id]);
+      const profileCount = rows[0] ? Number(rows[0].count) : 0;
+      if (profileCount <= 1) {
+        return res.status(400).json({ error: 'Es muss mindestens ein Profil bestehen bleiben' });
+      }
+      const { rowCount } = await db.query('DELETE FROM profiles WHERE id = $1 AND accountid = $2', [req.params.id, req.account.id]);
+      if (rowCount === 0) return res.status(404).json({ error: 'Profil nicht gefunden' });
       res.json({ ok: 1 });
     } catch (error) {
       console.error('profile delete error:', error.message);

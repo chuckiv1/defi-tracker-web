@@ -1,5 +1,6 @@
 const MESSAGE_SEGMENTS = new Set(['all_users', 'active_7d', 'active_30d', 'new_14d', 'verified_users', 'admins']);
 const ROLE_ORDER = ['user', 'support', 'admin', 'owner'];
+const VALID_ROLES = ['user', 'support', 'admin', 'owner'];
 
 function isPlainObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -64,10 +65,8 @@ function normalizeLoopTokenInput(value) {
   return String(value || '').trim().toUpperCase().slice(0, 50);
 }
 
-const VALID_ROLES = ['user', 'support', 'admin', 'owner'];
-
 function normalizeRole(role) {
-  return VALID_ROLES.includes(role) ? role : 'user';
+  return ROLE_ORDER.includes(role) ? role : 'user';
 }
 
 function validateRole(role) {
