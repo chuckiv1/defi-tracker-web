@@ -5,6 +5,7 @@ export const frfViewNames = [
   "frfDelPos",
   "frfDelFund",
   "frfClosePos",
+  "frfToggleCloseFunding",
   "frfTogPos",
   "frfTogStrat",
   "frfReopenPos",

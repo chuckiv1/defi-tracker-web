@@ -2,6 +2,7 @@ function registerMessageRoutes(app, deps) {
   const {
     MESSAGE_SEGMENTS,
     db,
+    flushScheduledMessages,
     getEditableMessageForSender,
     getMessageRecipients,
     getMessageStats,
@@ -11,13 +12,13 @@ function registerMessageRoutes(app, deps) {
     mapMessageRow,
     mirrorMessageToRecipients,
     normalizeMessagePayload,
-    requireAdmin,
     requireAuth,
     requireSupport,
   } = deps;
 
   app.get('/api/messages/summary', requireAuth, async (req, res) => {
     try {
+      await flushScheduledMessages();
       const { rows } = await db.query(`
         SELECT COUNT(*) FILTER (WHERE mr.readAt IS NULL)::int AS "unreadCount",
                COUNT(*) FILTER (WHERE mr.readAt IS NULL AND (m.priority = 'urgent' OR m.isPinned = true))::int AS "importantUnreadCount",
@@ -39,6 +40,7 @@ function registerMessageRoutes(app, deps) {
 
   app.get('/api/messages/inbox', requireAuth, async (req, res) => {
     try {
+      await flushScheduledMessages();
       const { rows } = await db.query(`
         SELECT m.*, sender.email AS senderEmail, target.email AS targetEmail,
                self.readAt AS selfReadAt,
@@ -65,6 +67,7 @@ function registerMessageRoutes(app, deps) {
 
   app.post('/api/messages/read-all', requireAuth, async (req, res) => {
     try {
+      await flushScheduledMessages();
       await db.query(`
         UPDATE message_recipients mr
         SET readAt = CURRENT_TIMESTAMP
@@ -110,12 +113,6 @@ function registerMessageRoutes(app, deps) {
       }
 
       if (hasRole(req.account, 'support')) {
-        // Restrict broadcast to admin or users with canBroadcast permission
-        if (payload.targetType === 'segment' || payload.targetType === 'all') {
-          if (!hasRole(req.account, 'admin') && !req.account.canBroadcast) {
-            return res.status(403).json({ error: 'Keine Berechtigung für Massennachrichten' });
-          }
-        }
         if (payload.targetType === 'direct' && !payload.targetAccountId) return res.status(400).json({ error: 'Empfänger fehlt' });
         if (payload.targetType === 'segment' && !MESSAGE_SEGMENTS.has(payload.audiencePreset)) return res.status(400).json({ error: 'Ungültiges Segment' });
         if (payload.status === 'scheduled' && !payload.scheduledAt) return res.status(400).json({ error: 'Zeitpunkt für geplante Nachricht fehlt' });
@@ -167,6 +164,14 @@ function registerMessageRoutes(app, deps) {
         if (!(await isPrivilegedRecipient(payload.targetAccountId))) return res.status(403).json({ error: 'Antworten sind nur an Support/Admin erlaubt' });
       }
 
+      if (hasRole(req.account, 'support')) {
+        if (payload.targetType === 'segment' || payload.targetType === 'all') {
+          if (!hasRole(req.account, 'admin') && !req.account.canBroadcast) {
+            return res.status(403).json({ error: 'Keine Berechtigung fuer Massennachrichten' });
+          }
+        }
+      }
+
       if (payload.targetType === 'direct' && !payload.targetAccountId) return res.status(400).json({ error: 'Empfänger fehlt' });
       if (payload.targetType === 'segment' && !MESSAGE_SEGMENTS.has(payload.audiencePreset)) return res.status(400).json({ error: 'Ungültiges Segment' });
       if (payload.status === 'scheduled' && !payload.scheduledAt) return res.status(400).json({ error: 'Zeitpunkt für geplante Nachricht fehlt' });
@@ -176,19 +181,32 @@ function registerMessageRoutes(app, deps) {
 
       const nextStatus = payload.status;
       const shouldSendNow = nextStatus === 'sent' && message.status !== 'sent';
-      await db.query(
-        `UPDATE messages SET targetType = $1, targetAccountId = $2, audiencePreset = $3, title = $4, body = $5, priority = $6, category = $7, linkUrl = $8,
-         isPinned = $9, expiresAt = $10, status = $11, scheduledAt = $12, readTracking = $13, emailMirror = $14,
-         conversationId = COALESCE($15, conversationId), parentMessageId = $16, sentAt = CASE WHEN $17 THEN CURRENT_TIMESTAMP ELSE sentAt END,
-         updatedAt = CURRENT_TIMESTAMP WHERE id = $18 AND senderAccountId = $19`,
-        [payload.targetType, payload.targetAccountId, payload.audiencePreset, payload.title, payload.body, payload.priority, payload.category, payload.linkUrl, payload.isPinned, payload.expiresAt, nextStatus, payload.scheduledAt, payload.readTracking, payload.emailMirror, payload.conversationId || message.conversationid || message.id, payload.parentMessageId || null, shouldSendNow, message.id, req.account.id],
-      );
 
-      await db.query('DELETE FROM message_recipients WHERE messageId = $1', [message.id]);
-      if (nextStatus === 'sent') {
-        await Promise.all(previewRecipients.map((recipient) => db.query('INSERT INTO message_recipients (messageId, accountId) VALUES ($1, $2) ON CONFLICT (messageId, accountId) DO NOTHING', [message.id, recipient.id])));
+      const client = await db.pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          `UPDATE messages SET targetType = $1, targetAccountId = $2, audiencePreset = $3, title = $4, body = $5, priority = $6, category = $7, linkUrl = $8,
+           isPinned = $9, expiresAt = $10, status = $11, scheduledAt = $12, readTracking = $13, emailMirror = $14,
+           conversationId = COALESCE($15, conversationId), parentMessageId = $16, sentAt = CASE WHEN $17 THEN CURRENT_TIMESTAMP ELSE sentAt END,
+           updatedAt = CURRENT_TIMESTAMP WHERE id = $18 AND senderAccountId = $19`,
+          [payload.targetType, payload.targetAccountId, payload.audiencePreset, payload.title, payload.body, payload.priority, payload.category, payload.linkUrl, payload.isPinned, payload.expiresAt, nextStatus, payload.scheduledAt, payload.readTracking, payload.emailMirror, payload.conversationId || message.conversationid || message.id, payload.parentMessageId || null, shouldSendNow, message.id, req.account.id],
+        );
+        await client.query('DELETE FROM message_recipients WHERE messageId = $1', [message.id]);
+        if (nextStatus === 'sent') {
+          await Promise.all(previewRecipients.map((recipient) => client.query('INSERT INTO message_recipients (messageId, accountId) VALUES ($1, $2) ON CONFLICT (messageId, accountId) DO NOTHING', [message.id, recipient.id])));
+        }
+        await client.query('COMMIT');
+      } catch (txError) {
+        await client.query('ROLLBACK');
+        throw txError;
+      } finally {
+        client.release();
+      }
+
+      if (shouldSendNow) {
         const messageRow = { id: message.id, senderaccountid: req.account.id, targettype: payload.targetType, targetaccountid: payload.targetAccountId, audiencepreset: payload.audiencePreset, emailmirror: payload.emailMirror, title: payload.title, body: payload.body, linkurl: payload.linkUrl };
-        if (shouldSendNow) await mirrorMessageToRecipients(messageRow, previewRecipients);
+        await mirrorMessageToRecipients(messageRow, previewRecipients);
       }
       res.json({ ok: 1 });
     } catch (error) {
@@ -215,8 +233,9 @@ function registerMessageRoutes(app, deps) {
     }
   });
 
-  app.get('/api/admin/messages/overview', requireAdmin, async (req, res) => {
+  app.get('/api/admin/messages/overview', requireSupport, async (req, res) => {
     try {
+      await flushScheduledMessages();
       const [draftRes, historyRes, userRes, statRes] = await Promise.all([
         db.query(`SELECT m.*, (SELECT COUNT(*) FROM message_recipients r WHERE r.messageId = m.id)::int AS recipientCount, (SELECT COUNT(*) FROM message_recipients r WHERE r.messageId = m.id AND r.readAt IS NOT NULL)::int AS readCount, (SELECT COUNT(*) FROM message_recipients r WHERE r.messageId = m.id AND r.readAt IS NULL)::int AS unreadCount FROM messages m WHERE m.senderAccountId = $1 AND m.withdrawnAt IS NULL AND m.status IN ('draft', 'scheduled') ORDER BY m.updatedAt DESC`, [req.account.id]),
         db.query(`SELECT m.*, target.email AS targetEmail, (SELECT COUNT(*) FROM message_recipients r WHERE r.messageId = m.id)::int AS recipientCount, (SELECT COUNT(*) FROM message_recipients r WHERE r.messageId = m.id AND r.readAt IS NOT NULL)::int AS readCount, (SELECT COUNT(*) FROM message_recipients r WHERE r.messageId = m.id AND r.readAt IS NULL)::int AS unreadCount FROM messages m LEFT JOIN accounts target ON target.id = m.targetAccountId WHERE m.senderAccountId = $1 AND m.withdrawnAt IS NULL AND m.status = 'sent' ORDER BY COALESCE(m.sentAt, m.createdAt) DESC LIMIT 100`, [req.account.id]),

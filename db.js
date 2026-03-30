@@ -51,6 +51,18 @@ async function initDB() {
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
+      CREATE TABLE IF NOT EXISTS email_verification_logs (
+        id VARCHAR(50) PRIMARY KEY,
+        accountId VARCHAR(50) REFERENCES accounts(id) ON DELETE CASCADE,
+        tokenHash VARCHAR(255) NOT NULL,
+        expiresAt TIMESTAMP NOT NULL,
+        usedAt TIMESTAMP,
+        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_email_verification_logs_token_hash ON email_verification_logs(tokenHash);
+      CREATE INDEX IF NOT EXISTS idx_email_verification_logs_account_id ON email_verification_logs(accountId, createdAt DESC);
+
       CREATE TABLE IF NOT EXISTS profiles (
         id VARCHAR(50) PRIMARY KEY,
         accountId VARCHAR(50) REFERENCES accounts(id) ON DELETE CASCADE,

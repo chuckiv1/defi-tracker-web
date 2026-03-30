@@ -1,8 +1,8 @@
 function createMailService({ nodemailer, smtpConfig, logger = console }) {
   async function sendMail(to, subject, html) {
     if (!smtpConfig.host) {
-      const linkMatch = typeof html === 'string' ? html.match(/href="([^"]*)"/) : null;
-      logger.log(`\n=== E-MAIL SIMULATION ===\nAn: ${to}\nBetreff: ${subject}\n${linkMatch ? `Inhalt (Link): ${linkMatch[1]}` : `Inhalt: ${String(html || '').replace(/<[^>]+>/g, ' ').trim().slice(0, 500)}`}\n=========================\n`);
+      const preview = String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+      logger.log(`\n=== E-MAIL SIMULATION ===\nAn: ${to}\nBetreff: ${subject}\nInhalt: [aus Sicherheitsgründen gekürzt]\nVorschau: ${preview || '(leer)'}\n=========================\n`);
       return true;
     }
 

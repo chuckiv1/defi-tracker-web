@@ -586,20 +586,37 @@ function strategyTokenSummary(s) {
   strategyTokenEntries(s).forEach(function (entry) {
     var key = entry.name.toUpperCase();
     if (!map[key]) {
-      map[key] = { name: entry.name, amount: 0, positiveAmount: 0, weightedCost: 0 };
+      map[key] = { name: entry.name, amount: 0, costBasis: 0 };
     }
-    map[key].amount += entry.amount;
-    if (entry.amount > 0 && entry.entryPrice > 0) {
-      map[key].positiveAmount += entry.amount;
-      map[key].weightedCost += entry.amount * entry.entryPrice;
+    if (entry.amount > 0) {
+      map[key].amount += entry.amount;
+      map[key].costBasis += entry.amount * Math.max(entry.entryPrice || 0, 0);
+      return;
     }
+    if (!(map[key].amount > 0)) {
+      map[key].amount += entry.amount;
+      if (map[key].amount <= 1e-9) {
+        map[key].amount = 0;
+        map[key].costBasis = 0;
+      }
+      return;
+    }
+    var sellAmount = Math.abs(entry.amount),
+      averageCost = map[key].amount > 0 ? map[key].costBasis / map[key].amount : 0;
+    if (sellAmount >= map[key].amount - 1e-9) {
+      map[key].amount = 0;
+      map[key].costBasis = 0;
+      return;
+    }
+    map[key].amount -= sellAmount;
+    map[key].costBasis = Math.max(0, map[key].costBasis - sellAmount * averageCost);
   });
   return Object.values(map)
     .filter(function (entry) {
       return Math.abs(entry.amount) > 1e-9;
     })
     .map(function (entry) {
-      var avgEntry = entry.positiveAmount > 0 ? entry.weightedCost / entry.positiveAmount : 0;
+      var avgEntry = entry.amount > 0 ? entry.costBasis / entry.amount : 0;
       return {
         name: entry.name,
         amount: entry.amount,
@@ -2051,8 +2068,8 @@ function calculateLoopingTotals(l) {
       collToken,
       l.collateralPrice || l.collateralprice,
     ),
-    sup = Math.abs(parseFloat(l.supplyApy || l.supplyapy || 0) || 0),
-    bor = Math.abs(parseFloat(l.borrowApy || l.borrowapy || 0) || 0),
+    sup = parseFloat(l.supplyApy || l.supplyapy || 0) || 0,
+    bor = parseFloat(l.borrowApy || l.borrowapy || 0) || 0,
     borrowPrice = loopTokenPrice(
       borrowToken,
       borrowToken &&
@@ -2160,9 +2177,9 @@ function loopBorrowAprSinceStart(loop, runtimeDays) {
     var realizedApr = loopAnnualizedRateFromChange(startBorrow, currentBorrow, runtimeDays);
     if (realizedApr !== null) return { aprPct: -Math.abs(realizedApr), source: 'current-amounts' };
   }
-  var avgBorrowApr = parseFloat(
-    (loop && (loop.avgborrowapr || loop.avgBorrowApr || loop.borrowapy || loop.borrowApy)) || 0,
-  );
+  var borrowAprValue = loop && (loop.avgborrowapr ?? loop.avgBorrowApr);
+  if (borrowAprValue === null || borrowAprValue === undefined || borrowAprValue === '') return null;
+  var avgBorrowApr = parseFloat(borrowAprValue);
   if (!Number.isFinite(avgBorrowApr)) return null;
   return { aprPct: -Math.abs(avgBorrowApr), source: 'snapshot-average' };
 }
