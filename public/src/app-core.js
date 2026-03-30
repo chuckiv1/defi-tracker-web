@@ -899,8 +899,8 @@ function frfAprForSort(p) {
   var end = p.endedAt || new Date().toISOString(),
     dur = db(p.startDate, end),
     cap = posAprCapital(p, FR.positions, FR.exchanges, end),
-    pnl = posPnl(p);
-  return calcApr(pnl - (p.fees || 0), cap, dur);
+    funding = frfFundingContribution(p);
+  return calcApr(funding - (p.fees || 0), cap, dur);
 }
 function frfTotalApr(arr) {
   var totalCap = 0,
@@ -6007,7 +6007,8 @@ function R(options) {
           var pnl = posPnl(p),
             d = db(p.startDate, p.endedAt || nw),
             cap = posAprCapital(p, FR.positions, FR.exchanges, p.endedAt || nw),
-            a = calcApr(pnl - (p.fees || 0), cap, d),
+            fundingAprBase = frfFundingContribution(p),
+            a = calcApr(fundingAprBase - (p.fees || 0), cap, d),
             liveSize = posLiveSize(p),
             ty = p.type === "hedge" ? "Hedge" : "FRF";
           h +=
@@ -6045,16 +6046,17 @@ function R(options) {
         );
       }
     } else if (V === "frf_pos" && FPI) {
-      var fp = FR.positions.find((x) => x.id === FPI);
-      if (fp) {
-        var pnl = posPnl(fp),
-          d = db(fp.startDate, fp.endedAt || nw),
-          cap = posCapital(fp),
-          aprCap = posAprCapital(fp, FR.positions, FR.exchanges, fp.endedAt || nw),
-          a = calcApr(pnl - fp.fees, aprCap, d),
-          pr = PRICES[fp.token ? fp.token.toUpperCase() : ""],
-          liveSize = posLiveSize(fp),
-          rpnl = runningFunding(fp),
+        var fp = FR.positions.find((x) => x.id === FPI);
+        if (fp) {
+          var pnl = posPnl(fp),
+            d = db(fp.startDate, fp.endedAt || nw),
+            cap = posCapital(fp),
+            aprCap = posAprCapital(fp, FR.positions, FR.exchanges, fp.endedAt || nw),
+            fundingAprBase = frfFundingContribution(fp),
+            a = calcApr(fundingAprBase - fp.fees, aprCap, d),
+            pr = PRICES[fp.token ? fp.token.toUpperCase() : ""],
+            liveSize = posLiveSize(fp),
+            rpnl = runningFunding(fp),
           isClosed = !!fp.endedAt;
         if (!isClosed) frfEnsureLive(fp.id);
         var linkedS = fp.linkedStrategyId
