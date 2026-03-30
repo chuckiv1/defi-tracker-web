@@ -4,6 +4,7 @@ function createExchangeService({ db, fs, path, WSClient, fetchImpl, baseDir }) {
   const VARIATIONAL_BATCH_SIZE = 120;
   const FUNDING_LOOKBACK_MS = 72 * 60 * 60 * 1000;
   const EIGHT_HOURS_MS = 8 * 60 * 60 * 1000;
+  const LORIS_CACHE_MS = 55 * 1000;
   const exchangeLookupCache = new Map();
   const variationalFundingSnapshotDir = path.join(baseDir, '.runtime');
   const variationalFundingSnapshotFile = path.join(variationalFundingSnapshotDir, 'variational-funding-snapshots.json');
@@ -70,6 +71,14 @@ function createExchangeService({ db, fs, path, WSClient, fetchImpl, baseDir }) {
   function normalizeLookupSymbol(raw, maxLen = 32) {
     const value = String(raw || '').trim().toUpperCase().slice(0, maxLen);
     return /^[A-Z0-9._-]{1,32}$/.test(value) ? value : '';
+  }
+
+  function lorisExchangeKey(provider) {
+    const value = String(provider || '').trim().toLowerCase();
+    if (value === 'bybit') return 'bybit';
+    if (value === 'hyperliquid') return 'hyperliquid';
+    if (value === 'phemex') return 'phemex';
+    return null;
   }
 
   function rankLookup(value, query) {
@@ -154,6 +163,46 @@ function createExchangeService({ db, fs, path, WSClient, fetchImpl, baseDir }) {
       settledRates72h8h: rows,
       ...extra,
     };
+  }
+
+  function hasUsableFundingPayload(payload) {
+    return !!(
+      payload &&
+      Number.isFinite(parseFloat(payload.currentRate))
+    );
+  }
+
+  function lorisPerIntervalRate(rawRate, intervalSeconds) {
+    const normalizedRate = parseFloat(rawRate);
+    const interval = parseFloat(intervalSeconds) || 0;
+    if (!Number.isFinite(normalizedRate) || !(interval > 0)) return null;
+    const scale = Math.max(1, EIGHT_HOURS_MS / 1000 / interval);
+    return normalizedRate / 10000 / scale;
+  }
+
+  async function getLorisFundingDataset() {
+    const cached = cacheGet('loris_funding_dataset');
+    if (cached) return cached;
+    const payload = await fetchJson('https://api.loris.tools/funding');
+    return cacheSet('loris_funding_dataset', payload || {}, LORIS_CACHE_MS);
+  }
+
+  async function getLorisFunding(provider, token, exchangeName) {
+    const exchangeKey = lorisExchangeKey(provider);
+    const symbol = normalizeLookupSymbol(token, 20);
+    if (!exchangeKey || !symbol) return null;
+    const payload = await getLorisFundingDataset();
+    const rates = payload && payload.funding_rates && payload.funding_rates[exchangeKey] ? payload.funding_rates[exchangeKey] : null;
+    const intervals = payload && payload.funding_intervals && payload.funding_intervals[exchangeKey] ? payload.funding_intervals[exchangeKey] : null;
+    const rawRate = rates ? rates[symbol] : null;
+    const intervalHours = intervals ? parseFloat(intervals[symbol]) || 0 : 0;
+    const intervalSeconds = intervalHours > 0 ? intervalHours * 3600 : 0;
+    const currentRate = lorisPerIntervalRate(rawRate, intervalSeconds);
+    if (currentRate === null) return null;
+    return buildFundingPayload('loris', exchangeName, symbol, symbol, currentRate, intervalSeconds, [], {
+      sourceLabel: 'Loris Tools funding fallback',
+      lorisTimestamp: payload && payload.timestamp ? payload.timestamp : null,
+    });
   }
 
   function variationalSettlementTime(nowMs, intervalSeconds) {
@@ -811,16 +860,43 @@ function createExchangeService({ db, fs, path, WSClient, fetchImpl, baseDir }) {
     return getBybitQuote(token, mode, exchangeName);
   }
 
-  async function getExchangeFunding(exchangeName, token, mode) {
-    if (mode === 'spot') return null;
-    const provider = normalizeExchangeProvider(exchangeName);
-    if (!provider) throw new Error('Boerse wird noch nicht unterstuetzt');
+  async function getNativeExchangeFunding(provider, exchangeName, token) {
     if (provider === 'grvt') return getGrvtFunding(token, exchangeName);
     if (provider === 'extended') return getExtendedFunding(token, exchangeName);
     if (provider === 'hyperliquid') return getHyperliquidFunding(token, exchangeName);
     if (provider === 'variational') return getVariationalFunding(token, exchangeName);
     if (provider === 'phemex') return getPhemexFunding(token, exchangeName);
     return getBybitFunding(token, exchangeName);
+  }
+
+  async function getExchangeFunding(exchangeName, token, mode) {
+    if (mode === 'spot') return null;
+    const provider = normalizeExchangeProvider(exchangeName);
+    if (!provider) throw new Error('Boerse wird noch nicht unterstuetzt');
+    let nativePayload = null;
+    let nativeError = null;
+    try {
+      nativePayload = await getNativeExchangeFunding(provider, exchangeName, token);
+    } catch (error) {
+      nativeError = error;
+    }
+    if (hasUsableFundingPayload(nativePayload)) return nativePayload;
+
+    const lorisPayload = await getLorisFunding(provider, token, exchangeName).catch(() => null);
+    if (hasUsableFundingPayload(lorisPayload)) {
+      if (nativePayload) {
+        return {
+          ...nativePayload,
+          currentRate: lorisPayload.currentRate,
+          intervalSeconds: nativePayload.intervalSeconds || lorisPayload.intervalSeconds,
+          sourceLabel: lorisPayload.sourceLabel,
+          lorisTimestamp: lorisPayload.lorisTimestamp,
+        };
+      }
+      return lorisPayload;
+    }
+    if (nativeError) throw nativeError;
+    return nativePayload;
   }
 
   async function getFrfSpotFallback(token, shortExchangeName, shortQuote) {
