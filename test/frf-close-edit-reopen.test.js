@@ -161,7 +161,7 @@ test('closing with explicit date stores endedAt and creates tracked auto-close m
 
   const position = profile.frf.positions[0];
   assert.equal(res.statusCode, 200);
-  assert.equal(position.endedAt, '2026-03-12T08:30:00.000Z');
+  assert.equal(position.endedAt, new Date('2026-03-12T09:30').toISOString());
   assert.equal(position.closePnlShort, 120);
   assert.equal(position.closePnlLong, -20);
   assert.ok(position.autoCloseMarginShortId);
@@ -216,7 +216,7 @@ test('editing a closed position updates tracked auto-close margin history instea
   const longAutoEntries = longExchange.marginHistory.filter((item) => item.id === 'auto-long');
 
   assert.equal(res.statusCode, 200);
-  assert.equal(position.endedAt, '2026-03-15T16:45:00.000Z');
+  assert.equal(position.endedAt, new Date('2026-03-15T17:45').toISOString());
   assert.equal(position.closePnlShort, 50);
   assert.equal(position.closePnlLong, 0);
   assert.equal(position.closeNote, 'edited');
