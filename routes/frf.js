@@ -6,6 +6,40 @@ function registerFrfRoutes(app, deps) {
     return Number.isFinite(parsed) ? parsed : NaN;
   }
 
+  function parseOptionalIsoDate(value, fallbackIso) {
+    if (value === null || value === undefined || value === '') return fallbackIso || new Date().toISOString();
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+
+  function ensureMarginHistory(exchange) {
+    if (!exchange.marginHistory) exchange.marginHistory = [];
+    return exchange.marginHistory;
+  }
+
+  function syncAutoCloseMargin(exchange, marginId, amount, dateIso, note, createId) {
+    const history = ensureMarginHistory(exchange);
+    const index = history.findIndex((item) => item.id === marginId);
+    if (!(amount !== 0)) {
+      if (index >= 0) history.splice(index, 1);
+      return '';
+    }
+    if (index >= 0) {
+      history[index].amount = amount;
+      history[index].date = dateIso;
+      history[index].note = note;
+      return history[index].id;
+    }
+    const id = marginId || createId();
+    history.push({ id, amount, date: dateIso, note });
+    return id;
+  }
+
+  function removeAutoCloseMargin(exchange, marginId) {
+    if (!exchange || !marginId) return;
+    exchange.marginHistory = ensureMarginHistory(exchange).filter((item) => item.id !== marginId);
+  }
+
   app.get('/api/frf', requireAuth, attachProfile, (req, res) => { res.json(req.profile.frf); });
 
   const router = express.Router();
@@ -137,7 +171,7 @@ function registerFrfRoutes(app, deps) {
   router.post('/frf/positions', async (req, res) => {
     svU(req, 'Pos+');
     const frf = req.profile.frf;
-    frf.positions.push({ id: gid(), type: req.body.type, token: req.body.token, coingeckoId: req.body.coingeckoId || '', shortAssetSymbol: req.body.shortAssetSymbol || req.body.token || '', longAssetSymbol: req.body.longAssetSymbol || req.body.token || '', shortMarketSymbol: req.body.shortMarketSymbol || req.body.token || '', longMarketSymbol: req.body.longMarketSymbol || req.body.token || '', tokenAmount: parseFloat(req.body.tokenAmount) || 0, positionSizeUsd: parseFloat(req.body.positionSizeUsd) || 0, entryPriceShort: parseFloat(req.body.entryPriceShort) || 0, entryPriceLong: parseFloat(req.body.entryPriceLong) || 0, shortExchangeId: req.body.shortExchangeId, longExchangeId: req.body.longExchangeId, longIsSpot: req.body.longIsSpot, fees: parseFloat(req.body.fees) || 0, linkedStrategyId: req.body.linkedStrategyId || '', linkedLoopId: req.body.linkedLoopId || '', startDate: req.body.startDate || new Date().toISOString(), endedAt: null, closePnlShort: null, closePnlLong: null, closePnlIncludesFunding: false, closeNote: '', manualPrice: 0, useManualPrice: false, includeInStrategy: false, excluded: false, fundingShort: [], fundingLong: [] });
+    frf.positions.push({ id: gid(), type: req.body.type, token: req.body.token, coingeckoId: req.body.coingeckoId || '', shortAssetSymbol: req.body.shortAssetSymbol || req.body.token || '', longAssetSymbol: req.body.longAssetSymbol || req.body.token || '', shortMarketSymbol: req.body.shortMarketSymbol || req.body.token || '', longMarketSymbol: req.body.longMarketSymbol || req.body.token || '', tokenAmount: parseFloat(req.body.tokenAmount) || 0, positionSizeUsd: parseFloat(req.body.positionSizeUsd) || 0, entryPriceShort: parseFloat(req.body.entryPriceShort) || 0, entryPriceLong: parseFloat(req.body.entryPriceLong) || 0, shortExchangeId: req.body.shortExchangeId, longExchangeId: req.body.longExchangeId, longIsSpot: req.body.longIsSpot, fees: parseFloat(req.body.fees) || 0, linkedStrategyId: req.body.linkedStrategyId || '', linkedLoopId: req.body.linkedLoopId || '', startDate: req.body.startDate || new Date().toISOString(), endedAt: null, closePnlShort: null, closePnlLong: null, closePnlIncludesFunding: false, closeNote: '', autoCloseMarginShortId: '', autoCloseMarginLongId: '', manualPrice: 0, useManualPrice: false, includeInStrategy: false, excluded: false, fundingShort: [], fundingLong: [] });
     await saveProfile(req);
     res.json(frf);
   });
@@ -164,7 +198,6 @@ function registerFrfRoutes(app, deps) {
     if (typeof req.body.longExchangeId === 'string') position.longExchangeId = req.body.longExchangeId;
     if (typeof req.body.longIsSpot === 'boolean') position.longIsSpot = req.body.longIsSpot;
     if (!Number.isNaN(parseFloat(req.body.fees))) position.fees = parseFloat(req.body.fees);
-    if (typeof req.body.closePnlIncludesFunding === 'boolean') position.closePnlIncludesFunding = req.body.closePnlIncludesFunding;
     if (typeof req.body.linkedStrategyId === 'string') position.linkedStrategyId = req.body.linkedStrategyId;
     if (typeof req.body.linkedLoopId === 'string') position.linkedLoopId = req.body.linkedLoopId;
     if (req.body.startDate) {
@@ -181,18 +214,66 @@ function registerFrfRoutes(app, deps) {
       const frf = req.profile.frf;
       const position = frf.positions.find((item) => item.id === req.params.id);
       if (!position) return res.status(404).json({ error: 'Position nicht gefunden' });
-      position.endedAt = new Date().toISOString();
+      const endedAt = parseOptionalIsoDate(req.body.closeDate, position.endedAt || new Date().toISOString());
+      if (!endedAt) return res.status(400).json({ error: 'Ungültiges Close-Datum' });
+      position.endedAt = endedAt;
       position.closePnlShort = parseFloat(req.body.closePnlShort) || 0;
       position.closePnlLong = parseFloat(req.body.closePnlLong) || 0;
-      position.closePnlIncludesFunding = !!req.body.closePnlIncludesFunding;
+      position.closePnlIncludesFunding = false;
       position.fees = parseFloat(req.body.fees) || 0;
       position.closeNote = req.body.closeNote || '';
-      if (position.closePnlShort !== 0 && position.shortExchangeId) { const exchange = frf.exchanges.find((item) => item.id === position.shortExchangeId); if (exchange) exchange.marginHistory.push({ id: gid(), amount: position.closePnlShort, date: position.endedAt, note: `Auto-Close PNL: ${position.token}` }); }
-      if (position.closePnlLong !== 0 && !position.longIsSpot && position.longExchangeId) { const exchange = frf.exchanges.find((item) => item.id === position.longExchangeId); if (exchange) exchange.marginHistory.push({ id: gid(), amount: position.closePnlLong, date: position.endedAt, note: `Auto-Close PNL: ${position.token}` }); }
+
+      const shortExchange = position.shortExchangeId ? frf.exchanges.find((item) => item.id === position.shortExchangeId) : null;
+      const longExchange = !position.longIsSpot && position.longExchangeId ? frf.exchanges.find((item) => item.id === position.longExchangeId) : null;
+      position.autoCloseMarginShortId = shortExchange
+        ? syncAutoCloseMargin(
+            shortExchange,
+            position.autoCloseMarginShortId,
+            position.closePnlShort,
+            position.endedAt,
+            `Auto-Close PNL: ${position.token}`,
+            gid,
+          )
+        : '';
+      position.autoCloseMarginLongId = longExchange
+        ? syncAutoCloseMargin(
+            longExchange,
+            position.autoCloseMarginLongId,
+            position.closePnlLong,
+            position.endedAt,
+            `Auto-Close PNL: ${position.token}`,
+            gid,
+          )
+        : '';
       await saveProfile(req);
       res.json(frf);
     } catch (error) {
       console.error('pos close:', error.message);
+      res.status(500).json({ error: 'Fehler' });
+    }
+  });
+
+  router.put('/frf/positions/:id/reopen', async (req, res) => {
+    try {
+      svU(req, 'Pos reopen');
+      const frf = req.profile.frf;
+      const position = frf.positions.find((item) => item.id === req.params.id);
+      if (!position) return res.status(404).json({ error: 'Position nicht gefunden' });
+      const shortExchange = position.shortExchangeId ? frf.exchanges.find((item) => item.id === position.shortExchangeId) : null;
+      const longExchange = !position.longIsSpot && position.longExchangeId ? frf.exchanges.find((item) => item.id === position.longExchangeId) : null;
+      removeAutoCloseMargin(shortExchange, position.autoCloseMarginShortId);
+      removeAutoCloseMargin(longExchange, position.autoCloseMarginLongId);
+      position.autoCloseMarginShortId = '';
+      position.autoCloseMarginLongId = '';
+      position.endedAt = null;
+      position.closePnlShort = null;
+      position.closePnlLong = null;
+      position.closePnlIncludesFunding = false;
+      position.closeNote = '';
+      await saveProfile(req);
+      res.json(frf);
+    } catch (error) {
+      console.error('pos reopen:', error.message);
       res.status(500).json({ error: 'Fehler' });
     }
   });

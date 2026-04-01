@@ -916,8 +916,10 @@ function frfAprForSort(p) {
   var end = p.endedAt || new Date().toISOString(),
     dur = db(p.startDate, end),
     cap = posAprCapital(p, FR.positions, FR.exchanges, end),
-    funding = frfFundingContribution(p);
-  return calcApr(funding - (p.fees || 0), cap, dur);
+    pnl = p && p.endedAt
+      ? (parseFloat(p.closePnlShort) || 0) + (parseFloat(p.closePnlLong) || 0)
+      : posPnl(p);
+  return calcApr(pnl - (p.fees || 0), cap, dur);
 }
 function frfTotalApr(arr) {
   var totalCap = 0,
@@ -1017,6 +1019,7 @@ function posCapitalAt(position, atIso, positions, exchanges) {
   if (!position) return 0;
   var basis = posEntrySize(position) || position.positionSizeUsd || 0;
   if (!(basis > 0)) return 0;
+  if (position.longIsSpot) return basis;
   var cap = 0;
   var exchangeIds = [position.shortExchangeId];
   if (!position.longIsSpot && position.longExchangeId) exchangeIds.push(position.longExchangeId);
@@ -2757,14 +2760,19 @@ function frfDelFund(pid, side, fid) {
   }).then(loadData);
 }
 function frfClosePos(id) {
-  M.fclose = { id: id };
+  var position = FR.positions.find(function (item) {
+    return item.id === id;
+  });
+  M.fclose = {
+    id: id,
+    mode: position && position.endedAt ? "edit" : "close",
+    closePnlShort: position && position.closePnlShort !== null && position.closePnlShort !== undefined ? position.closePnlShort : 0,
+    closePnlLong: position && position.closePnlLong !== null && position.closePnlLong !== undefined ? position.closePnlLong : 0,
+    fees: position && position.fees !== null && position.fees !== undefined ? position.fees : 0,
+    closeNote: (position && position.closeNote) || "",
+    closeDate: position && position.endedAt ? position.endedAt : "",
+  };
   R();
-}
-function frfToggleCloseFunding(id, nextValue) {
-  F("/api/frf/positions/" + id, {
-    method: "PUT",
-    body: JSON.stringify({ closePnlIncludesFunding: !!nextValue }),
-  }).then(loadData);
 }
 function frfTogPos(id) {
   F("/api/frf/positions/" + id + "/toggle", { method: "PUT" }).then(loadData);
@@ -3834,15 +3842,18 @@ function hFefund() {
 }
 function hFclose() {
   var o = M.fclose;
+  var closeDate = document.getElementById("f-fcd").value || "";
+  var closeTime = document.getElementById("f-fct").value || "";
+  var closeDateValue = closeDate ? closeDate + "T" + (closeTime || "00:00") : "";
   cm();
   F("/api/frf/positions/" + o.id + "/close", {
     method: "PUT",
     body: JSON.stringify({
       closePnlShort: parseFloat(document.getElementById("f-fcs").value) || 0,
       closePnlLong: parseFloat(document.getElementById("f-fcl").value) || 0,
-      closePnlIncludesFunding: !!(document.getElementById("f-fci") && document.getElementById("f-fci").checked),
       fees: parseFloat(document.getElementById("f-fcf").value) || 0,
       closeNote: document.getElementById("f-fcn").value || "",
+      closeDate: closeDateValue,
     }),
   }).then(() => {
     if (FPI === o.id) {
@@ -6024,8 +6035,7 @@ function R(options) {
           var pnl = posPnl(p),
             d = db(p.startDate, p.endedAt || nw),
             cap = posAprCapital(p, FR.positions, FR.exchanges, p.endedAt || nw),
-            fundingAprBase = frfFundingContribution(p),
-            a = calcApr(fundingAprBase - (p.fees || 0), cap, d),
+            a = frfAprForSort(p),
             liveSize = posLiveSize(p),
             ty = p.type === "hedge" ? "Hedge" : "FRF";
           h +=
@@ -6069,8 +6079,7 @@ function R(options) {
             d = db(fp.startDate, fp.endedAt || nw),
             cap = posCapital(fp),
             aprCap = posAprCapital(fp, FR.positions, FR.exchanges, fp.endedAt || nw),
-            fundingAprBase = frfFundingContribution(fp),
-            a = calcApr(fundingAprBase - fp.fees, aprCap, d),
+            a = frfAprForSort(fp),
             pr = PRICES[fp.token ? fp.token.toUpperCase() : ""],
             liveSize = posLiveSize(fp),
             rpnl = runningFunding(fp),
@@ -6317,13 +6326,6 @@ function R(options) {
             '">' +
             (fp.closePnlLong >= 0 ? "+" : "") +
             fn(fp.closePnlLong || 0) +
-            '</span></div><div class="iti"><span class="itl">Funding in Close PNL</span><span class="itv">' +
-            '<label class="sw" style="vertical-align:middle;margin-right:6px"><input type="checkbox" ' +
-            (fp.closePnlIncludesFunding ? 'checked' : '') +
-            ' onchange="frfToggleCloseFunding(\'' +
-            fp.id +
-            '\',this.checked)"><span class="sl2"></span></label>' +
-            (fp.closePnlIncludesFunding ? 'Aktiv' : 'Getrennt') +
             '</span></div></div></div>';
         }
         var fsArr = fp.fundingShort || [],
@@ -6457,9 +6459,13 @@ function R(options) {
             "'};R()\">Bearbeiten</button>";
         } else {
           h +=
+            '<button class="bt by" style="padding:10px 22px;font-size:13px" onclick="frfClosePos(\'' +
+            fp.id +
+            "')\">Bearbeiten</button>";
+          h +=
             '<button class="bt bb" style="padding:10px 22px;font-size:13px" onclick="frfReopenPos(\'' +
             fp.id +
-            "')\">Reopnen</button>";
+            "')\">Reopen</button>";
           h +=
             '<button class="bt be" style="padding:10px 22px;font-size:13px" onclick="frfDelPos(\'' +
             fp.id +
@@ -7000,8 +7006,25 @@ function R(options) {
       '"></div></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt bp" onclick="hFefund()">Speichern</button></div></div></div>';
   }
   if (M.fclose) {
+    var fc = M.fclose || {};
     h +=
-      '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">Position schließen</div><div class="fg"><label>PNL Short-Seite (USDC)</label><input id="f-fcs" type="number" step="0.01"></div><div class="fg"><label>PNL Long-Seite (USDC / Spot)</label><input id="f-fcl" type="number" step="0.01"></div><div class="fg"><label class="sw"><input type="checkbox" id="f-fci"><span class="sl2"></span></label> <span style="font-size:13px;margin-left:8px;vertical-align:super">PNL inkl. Fundings</span><div class="hnt">Standard ist aus. Dann bleiben Fundings separat und werden nicht in die Close-PNL eingerechnet.</div></div><div class="fg"><label>Fees (optional)</label><input id="f-fcf" type="number" step="0.01" value="0"></div><div class="fg"><label>Notiz</label><input id="f-fcn"></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt be" style="flex:1;justify-content:center" onclick="hFclose()">Schließen</button></div></div></div>';
+      '<div class="ov" onclick="cm();R()"><div class="mdl" onclick="event.stopPropagation()"><div class="mdt">' +
+      (fc.mode === "edit" ? 'Position schließen bearbeiten' : 'Position schließen') +
+      '</div><div class="fg"><label>PNL Short-Seite (USDC)</label><input id="f-fcs" type="number" step="0.01" value="' +
+      es(String(fc.closePnlShort || 0)) +
+      '"></div><div class="fg"><label>PNL Long-Seite (USDC / Spot)</label><input id="f-fcl" type="number" step="0.01" value="' +
+      es(String(fc.closePnlLong || 0)) +
+      '"></div><div class="fr"><div class="fg"><label>Close Datum (leer = jetzt)</label><input id="f-fcd" type="date" value="' +
+      (fc.closeDate ? fds(fc.closeDate) : '') +
+      '"></div><div class="fg"><label>Close Uhrzeit</label><input id="f-fct" type="time" value="' +
+      (fc.closeDate ? fts(fc.closeDate) : '') +
+      '"></div></div><div class="fg"><label>Fees (optional)</label><input id="f-fcf" type="number" step="0.01" value="' +
+      es(String(fc.fees || 0)) +
+      '"></div><div class="fg"><label>Notiz</label><input id="f-fcn" value="' +
+      es(fc.closeNote || '') +
+      '"></div><div class="mda"><button class="bt bcn" onclick="cm();R()">Abbrechen</button><button class="bt be" style="flex:1;justify-content:center" onclick="hFclose()">' +
+      (fc.mode === "edit" ? 'Änderungen speichern' : 'Schließen') +
+      '</button></div></div></div>';
   }
   if (M.fprc) {
     var ump = M.fprc.ump;
@@ -7381,7 +7404,7 @@ const _legacyRegistry = {
   hLoopCr, openLoopDetail, openLoopEdit, hLoopUpd, saveLoopCurrentAmounts, closeLoop, updateLoopName, renderLoopModal,
   hFeature, hVote, openAdminDetail, renderAdminChart,
   endS, reaS, delS, delR, delP, togP, togStratApr, doUndo,
-  frfDelEx, frfDelPos, frfDelFund, frfClosePos, frfToggleCloseFunding,
+  frfDelEx, frfDelPos, frfDelFund, frfClosePos,
   frfTogPos, frfTogStrat, frfReopenPos,
   linkedTargetValue, linkedTargetOptions, linkedTargetPayload,
   exchangePresetValueForName, resolveExchangeFormName, exchangePresetOptionsHtml,
