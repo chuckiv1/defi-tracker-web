@@ -24,7 +24,16 @@ function registerAuthRoutes(app, deps) {
   app.get('/api/auth/status', async (req, res) => {
     try {
       if (!req.account) return res.json({ loggedIn: false });
-      const { rows: profiles } = await db.query('SELECT id, name FROM profiles WHERE accountid = $1', [req.account.id]);
+
+      // Im offenen Betrieb soll genau ein Profil sichtbar sein. Das Frontend
+      // waehlt profiles[0], und die Abfrage hat keine feste Reihenfolge —
+      // ohne diesen Filter landet der Besucher auf einem beliebigen, oft
+      // leeren Profil.
+      const openAccessProfileId = (process.env.OPEN_ACCESS_PROFILE_ID || '').trim();
+      const { rows: profiles } = openAccessProfileId
+        ? await db.query('SELECT id, name FROM profiles WHERE accountid = $1 AND id = $2', [req.account.id, openAccessProfileId])
+        : await db.query('SELECT id, name FROM profiles WHERE accountid = $1', [req.account.id]);
+
       res.json({ loggedIn: true, account: { email: req.account.email, role: req.account.role }, profiles });
     } catch (error) {
       console.error('auth/status error:', error.message);
