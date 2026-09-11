@@ -1,5 +1,30 @@
 function createAuthMiddleware({ db, jwt, jwtSecret, sessionCookie, normalizeRole, hasRole, touchPresence }) {
+  // Offener Betrieb: ist OPEN_ACCESS_ACCOUNT_ID gesetzt, gilt jeder Besucher
+  // als dieser Account — ohne Login, ohne Cookie. Gedacht fuer eine Instanz,
+  // die bewusst oeffentlich steht und nur ein Konto zeigt.
+  //
+  // Ist die Variable leer oder nicht gesetzt, aendert sich nichts: dann
+  // laeuft die normale Anmeldung ueber den JWT-Cookie. Der Schalter muss
+  // also aktiv gesetzt werden, versehentlich geht er nicht an.
+  const openAccessAccountId = (process.env.OPEN_ACCESS_ACCOUNT_ID || '').trim();
+
   async function attachAccount(req, res, next) {
+    if (openAccessAccountId) {
+      try {
+        const { rows } = await db.query('SELECT * FROM accounts WHERE id = $1', [openAccessAccountId]);
+        if (rows.length > 0) {
+          req.account = rows[0];
+          req.account.role = normalizeRole(req.account.role);
+          touchPresence(req.account.id);
+        } else {
+          console.error('OPEN_ACCESS_ACCOUNT_ID zeigt auf kein vorhandenes Konto:', openAccessAccountId);
+        }
+      } catch (error) {
+        console.error('attachAccount (offener Betrieb) fehlgeschlagen:', error.message);
+      }
+      return next();
+    }
+
     const token = req.cookies[sessionCookie];
     if (!token) return next();
 
